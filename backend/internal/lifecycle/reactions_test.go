@@ -614,3 +614,31 @@ func pendingCI(t *testing.T, m *Manager) {
 		t.Fatalf("pendingCI: %v", err)
 	}
 }
+
+func TestReaction_ChangedCIFailureFingerprintRearmsDispatch(t *testing.T) {
+	m, store, _, msgr := newReactive()
+	store.seed(sid, lcOpenPR(domain.PRReasonReviewPending))
+	tail1 := "first failure"
+	facts := ports.SCMFacts{Fetched: true, PRState: domain.PROpen, CISummary: ports.CIFailing, PRNumber: 7, CIFailedChecks: []ports.CICheck{{Name: "test", Conclusion: "failure", URL: "https://ci/1"}}, CIFailureLogTail: &tail1}
+	if err := m.ApplySCMObservation(ctx(), sid, facts); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ApplySCMObservation(ctx(), sid, facts); err != nil {
+		t.Fatal(err)
+	}
+	if len(msgr.sent) != 1 {
+		t.Fatalf("duplicate payload should be deduped, got %d sends", len(msgr.sent))
+	}
+	tail2 := "second failure"
+	facts.CIFailedChecks = []ports.CICheck{{Name: "lint", Conclusion: "failure", URL: "https://ci/2"}}
+	facts.CIFailureLogTail = &tail2
+	if err := m.ApplySCMObservation(ctx(), sid, facts); err != nil {
+		t.Fatal(err)
+	}
+	if len(msgr.sent) != 2 {
+		t.Fatalf("changed failure set should re-arm dispatch, got %d sends", len(msgr.sent))
+	}
+	if !strings.Contains(msgr.sent[1].Message, "lint") || !strings.Contains(msgr.sent[1].Message, tail2) {
+		t.Fatalf("second message missing changed details: %q", msgr.sent[1].Message)
+	}
+}

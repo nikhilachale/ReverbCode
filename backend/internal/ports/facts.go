@@ -31,6 +31,7 @@ type SCMFacts struct {
 	ReviewDecision   ReviewDecision
 	Mergeability     Mergeability
 	PendingComments  []ReviewComment
+	CIFailedChecks   []CICheck
 	CIFailureLogTail *string
 }
 
@@ -63,13 +64,27 @@ type Mergeability struct {
 	Blockers    []string
 }
 
+type CICheck struct {
+	Name       string
+	Status     string
+	Conclusion string
+	URL        string
+	Details    string
+	LogTail    string
+}
+
 // ReviewComment carries IsBot so the decider can route bot review comments
 // (bugbot-comments reaction) differently from human ones (changes-requested).
+// Path/Line/ThreadID are optional reaction details for SCM providers that expose
+// unresolved review threads.
 type ReviewComment struct {
-	Author string
-	Body   string
-	IsBot  bool
-	URL    string
+	Author   string
+	Body     string
+	IsBot    bool
+	URL      string
+	Path     string
+	Line     int
+	ThreadID string
 }
 
 // RuntimeFacts is produced by the reaper and handed to ApplyRuntimeObservation.

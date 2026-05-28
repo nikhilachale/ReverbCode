@@ -39,4 +39,5 @@ type SessionRecord struct {
 type Session struct {
 	SessionRecord
 	Status SessionStatus `json:"status"`
+	SCM    *SCMSnapshot  `json:"scm,omitempty"`
 }

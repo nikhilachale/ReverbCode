@@ -49,9 +49,10 @@ type Manager struct {
 	// canonical state). trackerMu guards them: react() touches them from the
 	// caller's goroutine, TickEscalations from the reaper's. clock is the time
 	// source for escalation stamping (overridable in tests).
-	trackers  map[trackerKey]*reactionTracker
-	trackerMu sync.Mutex
-	clock     func() time.Time
+	trackers     map[trackerKey]*reactionTracker
+	fingerprints map[trackerKey]string
+	trackerMu    sync.Mutex
+	clock        func() time.Time
 
 	// sessionLister returns every session known to persistence so RunningSessions
 	// can filter by runtime axis without coupling the LCM to a cross-project
@@ -71,6 +72,7 @@ func New(store ports.LifecycleStore, notifier ports.Notifier, messenger ports.Ag
 		messenger:            messenger,
 		recentActivityWindow: defaultRecentActivityWindow,
 		trackers:             map[trackerKey]*reactionTracker{},
+		fingerprints:         map[trackerKey]string{},
 		clock:                time.Now,
 	}
 }
@@ -270,7 +272,23 @@ func (m *Manager) ApplySCMObservation(ctx context.Context, id domain.SessionID, 
 	if err != nil {
 		return err
 	}
-	return m.react(ctx, id, tr, reactionContext{ciFailureLogTail: f.CIFailureLogTail})
+	rc := reactionContext{
+		ciFailureLogTail: f.CIFailureLogTail,
+		failedChecks:     f.CIFailedChecks,
+		pendingComments:  f.PendingComments,
+		mergeability:     f.Mergeability,
+		fingerprint:      scmReactionFingerprint(f),
+	}
+	if tr == nil && f.Fetched && rc.fingerprint != "" {
+		cur, exists, loadErr := m.store.Load(ctx, id)
+		if loadErr != nil {
+			return loadErr
+		}
+		if exists {
+			tr = &transition{beforeLC: cur, afterLC: cur}
+		}
+	}
+	return m.react(ctx, id, tr, rc)
 }
 
 // ApplyActivitySignal updates the activity axis. Only a valid-confidence signal

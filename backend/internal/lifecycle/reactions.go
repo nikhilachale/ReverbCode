@@ -11,7 +11,11 @@ package lifecycle
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -177,6 +181,10 @@ func reactionEventFor(l domain.CanonicalSessionLifecycle) (reactionKey, bool) {
 // SCM path populates it (CI failure log tail); other paths pass the zero value.
 type reactionContext struct {
 	ciFailureLogTail *string
+	failedChecks     []ports.CICheck
+	pendingComments  []ports.ReviewComment
+	mergeability     ports.Mergeability
+	fingerprint      string
 }
 
 // trackerKey buckets an escalation tracker by session and reaction.
@@ -244,8 +252,19 @@ func (m *Manager) react(ctx context.Context, id domain.SessionID, tr *transition
 		}
 	}
 
-	if hasAfter && (!hadBefore || changed) {
-		return m.executeReaction(ctx, id, tr.projectID, afterKey, rc)
+	if hasAfter {
+		shouldDispatch := !hadBefore || changed
+		if !shouldDispatch && rc.fingerprint != "" {
+			shouldDispatch = m.fingerprintDiffers(id, afterKey, rc.fingerprint)
+		}
+		if shouldDispatch {
+			if err := m.executeReaction(ctx, id, tr.projectID, afterKey, rc); err != nil {
+				return err
+			}
+			if rc.fingerprint != "" {
+				m.setFingerprint(id, afterKey, rc.fingerprint)
+			}
+		}
 	}
 	return nil
 }
@@ -375,10 +394,72 @@ func (m *Manager) escalate(ctx context.Context, id domain.SessionID, projectID d
 }
 
 func composeMessage(cfg reactionConfig, rc reactionContext) string {
-	if rc.ciFailureLogTail != nil && *rc.ciFailureLogTail != "" {
-		return cfg.message + "\n\nFailing output:\n" + *rc.ciFailureLogTail
+	parts := []string{cfg.message}
+	if len(rc.failedChecks) > 0 {
+		var b strings.Builder
+		b.WriteString("Failed checks:")
+		for _, c := range rc.failedChecks {
+			b.WriteString("\n- ")
+			b.WriteString(firstNonEmpty(c.Name, "check"))
+			if c.Conclusion != "" || c.Status != "" {
+				b.WriteString(" (")
+				b.WriteString(firstNonEmpty(c.Conclusion, c.Status))
+				b.WriteString(")")
+			}
+			if c.URL != "" {
+				b.WriteString(": ")
+				b.WriteString(c.URL)
+			}
+			if c.LogTail != "" {
+				b.WriteString("\n  tail: ")
+				b.WriteString(c.LogTail)
+			}
+		}
+		parts = append(parts, b.String())
 	}
-	return cfg.message
+	if rc.ciFailureLogTail != nil && *rc.ciFailureLogTail != "" {
+		parts = append(parts, "Failing output:\n"+*rc.ciFailureLogTail)
+	}
+	if len(rc.pendingComments) > 0 {
+		var b strings.Builder
+		b.WriteString("Unresolved review threads:")
+		for _, c := range rc.pendingComments {
+			b.WriteString("\n- ")
+			if c.Path != "" {
+				b.WriteString(c.Path)
+				if c.Line > 0 {
+					b.WriteString(fmt.Sprintf(":%d", c.Line))
+				}
+				b.WriteString(" ")
+			}
+			if c.Author != "" {
+				b.WriteString("@")
+				b.WriteString(c.Author)
+				b.WriteString(": ")
+			}
+			body := strings.Join(strings.Fields(c.Body), " ")
+			if len(body) > 240 {
+				body = body[:240] + "…"
+			}
+			b.WriteString(body)
+			if c.URL != "" {
+				b.WriteString(" ")
+				b.WriteString(c.URL)
+			}
+		}
+		parts = append(parts, b.String())
+	}
+	if len(rc.mergeability.Blockers) > 0 {
+		parts = append(parts, "Merge blockers:\n- "+strings.Join(rc.mergeability.Blockers, "\n- "))
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 // trackerFor returns the tracker for (id,key), creating it on first use. The
@@ -395,7 +476,9 @@ func (m *Manager) trackerFor(id domain.SessionID, key reactionKey) *reactionTrac
 
 func (m *Manager) clearTracker(id domain.SessionID, key reactionKey) {
 	m.trackerMu.Lock()
-	delete(m.trackers, trackerKey{id: id, key: key})
+	tk := trackerKey{id: id, key: key}
+	delete(m.trackers, tk)
+	delete(m.fingerprints, tk)
 	m.trackerMu.Unlock()
 }
 
@@ -409,8 +492,63 @@ func (m *Manager) clearSessionTrackers(id domain.SessionID) {
 			delete(m.trackers, k)
 		}
 	}
+	for k := range m.fingerprints {
+		if k.id == id {
+			delete(m.fingerprints, k)
+		}
+	}
 	m.trackerMu.Unlock()
 }
+
+func (m *Manager) fingerprintDiffers(id domain.SessionID, key reactionKey, fp string) bool {
+	m.trackerMu.Lock()
+	defer m.trackerMu.Unlock()
+	return m.fingerprints[trackerKey{id: id, key: key}] != fp
+}
+
+func (m *Manager) setFingerprint(id domain.SessionID, key reactionKey, fp string) {
+	m.trackerMu.Lock()
+	m.fingerprints[trackerKey{id: id, key: key}] = fp
+	m.trackerMu.Unlock()
+}
+
+// scmReactionFingerprint returns a stable payload fingerprint for reactions
+// whose details should re-arm dispatch even when the canonical PR reason stays
+// the same (changed CI failure set, review thread set, or merge blockers).
+func scmReactionFingerprint(f ports.SCMFacts) string {
+	if !f.Fetched {
+		return ""
+	}
+	type payload struct {
+		Kind     string
+		Checks   []ports.CICheck
+		Comments []ports.ReviewComment
+		Merge    ports.Mergeability
+		Tail     string
+	}
+	p := payload{}
+	switch {
+	case f.CISummary == ports.CIFailing:
+		p.Kind = "ci"
+		p.Checks = f.CIFailedChecks
+		if f.CIFailureLogTail != nil {
+			p.Tail = *f.CIFailureLogTail
+		}
+	case hasPendingCommentFacts(f.PendingComments):
+		p.Kind = "review"
+		p.Comments = f.PendingComments
+	case len(f.Mergeability.Blockers) > 0 || (!f.Mergeability.Mergeable && !f.Mergeability.NoConflicts):
+		p.Kind = "mergeability"
+		p.Merge = f.Mergeability
+	default:
+		return ""
+	}
+	b, _ := json.Marshal(p)
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+func hasPendingCommentFacts(comments []ports.ReviewComment) bool { return len(comments) > 0 }
 
 // TickEscalations fires the duration-based escalations the synchronous LCM
 // cannot wake itself for. The reaper calls it on a timer; it escalates any
