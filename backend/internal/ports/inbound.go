@@ -13,6 +13,7 @@ import (
 type LifecycleManager interface {
 	ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f RuntimeFacts) error
 	ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ActivitySignal) error
+	ApplySCMObservation(ctx context.Context, id domain.SessionID, f SCMFacts) error
 	ApplyPRObservation(ctx context.Context, id domain.SessionID, o PRObservation) error
 
 	// OnSpawnCompleted marks a session live and records its handles. It works for

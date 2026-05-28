@@ -7,7 +7,10 @@ package lifecycle
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -136,6 +139,21 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	return m.runReactions(ctx, id, reactionContent{})
 }
 
+// ApplySCMObservation accepts the normalized SCM observer DTO and projects it
+// onto the existing PR observation lane. The SCM snapshot/store owns durable SCM
+// truth; the LCM consumes only the PR facts needed for canonical decisions and
+// reactions.
+func (m *Manager) ApplySCMObservation(ctx context.Context, id domain.SessionID, f ports.SCMFacts) error {
+	if !f.Fetched {
+		return nil
+	}
+	o, ok := scmFactsToPRObservation(f)
+	if !ok {
+		return nil
+	}
+	return m.ApplyPRObservation(ctx, id, o)
+}
+
 // ApplyPRObservation records the observed PR facts in the pr tables, terminates
 // the session on a merge, and fires the PR-driven reactions. A failed fetch is
 // dropped (failed probe != "PR closed").
@@ -201,6 +219,128 @@ func (m *Manager) writePR(ctx context.Context, id domain.SessionID, o ports.PROb
 		comments[i] = c
 	}
 	return m.pr.WritePR(ctx, row, checks, comments)
+}
+
+func scmFactsToPRObservation(f ports.SCMFacts) (ports.PRObservation, bool) {
+	if f.PRState == "" || f.PRState == domain.PRNone {
+		return ports.PRObservation{}, false
+	}
+	o := ports.PRObservation{
+		Fetched:      true,
+		URL:          f.PRURL,
+		Number:       f.PRNumber,
+		Draft:        f.Draft || f.PRState == domain.PRDraft,
+		Merged:       f.PRState == domain.PRMerged,
+		Closed:       f.PRState == domain.PRClosed || f.PRState == domain.PRMerged,
+		CI:           scmCIState(f.CISummary),
+		Review:       scmReviewDecision(f.ReviewDecision),
+		Mergeability: scmMergeability(f.Mergeability),
+	}
+	if o.URL == "" && o.Number == 0 {
+		return ports.PRObservation{}, false
+	}
+	for _, c := range f.CIFailedChecks {
+		o.Checks = append(o.Checks, ports.PRCheckRow{
+			Name:    firstNonEmpty(c.Name, "check"),
+			Status:  prCheckStatus(c),
+			URL:     c.URL,
+			LogTail: firstNonEmpty(c.LogTail, c.Details),
+		})
+	}
+	if f.CIFailureLogTail != nil && *f.CIFailureLogTail != "" && len(o.Checks) == 0 && o.CI == domain.CIFailing {
+		o.Checks = append(o.Checks, ports.PRCheckRow{Name: "ci", Status: "failed", LogTail: *f.CIFailureLogTail})
+	}
+	for _, c := range f.PendingComments {
+		o.Comments = append(o.Comments, ports.PRComment{
+			ID:       reviewCommentID(c),
+			Author:   c.Author,
+			File:     c.Path,
+			Line:     c.Line,
+			Body:     c.Body,
+			Resolved: false,
+		})
+	}
+	return o, true
+}
+
+func scmCIState(s ports.CISummary) domain.CIState {
+	switch s {
+	case ports.CIFailing:
+		return domain.CIFailing
+	case ports.CIPassing:
+		return domain.CIPassing
+	case ports.CIPending:
+		return domain.CIPending
+	default:
+		return domain.CIUnknown
+	}
+}
+
+func scmReviewDecision(d ports.ReviewDecision) domain.ReviewDecision {
+	switch d {
+	case ports.ReviewApproved:
+		return domain.ReviewApproved
+	case ports.ReviewChangesRequested:
+		return domain.ReviewChangesRequest
+	case ports.ReviewPending:
+		return domain.ReviewRequired
+	default:
+		return domain.ReviewNone
+	}
+}
+
+func scmMergeability(m ports.Mergeability) domain.Mergeability {
+	switch {
+	case m.Conflict || (!m.NoConflicts && len(m.Blockers) > 0):
+		return domain.MergeConflicting
+	case m.Mergeable:
+		return domain.MergeMergeable
+	case m.BehindBase || len(m.Blockers) > 0:
+		return domain.MergeBlocked
+	case m.Unknown:
+		return domain.MergeUnknown
+	default:
+		return domain.MergeUnknown
+	}
+}
+
+func prCheckStatus(c ports.CICheck) string {
+	v := strings.ToLower(strings.TrimSpace(firstNonEmpty(c.Conclusion, c.Status)))
+	switch v {
+	case "success", "successful", "passed", "passing", "pass":
+		return "passed"
+	case "failure", "failed", "failing", "error", "timed_out", "cancelled", "action_required", "startup_failure":
+		return "failed"
+	case "queued", "requested", "waiting", "expected":
+		return "queued"
+	case "in_progress", "pending":
+		return "in_progress"
+	case "skipped", "neutral", "stale":
+		return "skipped"
+	default:
+		if v == "" {
+			return "unknown"
+		}
+		return v
+	}
+}
+
+func reviewCommentID(c ports.ReviewComment) string {
+	if c.ThreadID != "" && c.URL != "" {
+		return c.ThreadID + "|" + c.URL
+	}
+	seed := fmt.Sprintf("%s|%s|%s|%d|%s|%s", c.ThreadID, c.URL, c.Author, c.Line, c.Path, c.Body)
+	sum := sha256.Sum256([]byte(seed))
+	return hex.EncodeToString(sum[:])
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // ---- mutation commands from the Session Manager ----

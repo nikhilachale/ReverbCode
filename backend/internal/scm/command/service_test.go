@@ -1,0 +1,69 @@
+package command
+
+import (
+	"context"
+	"testing"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/scm/store"
+)
+
+type fakeCommandProvider struct{ called ports.SCMCommand }
+
+func (f *fakeCommandProvider) Provider() domain.SCMProvider { return domain.SCMProviderGitHub }
+func (f *fakeCommandProvider) Capabilities() ports.SCMCommandCapabilities {
+	return ports.SCMCommandCapabilities{Merge: true, Close: true, Comment: true, Assign: true, Checkout: true}
+}
+func (f *fakeCommandProvider) Merge(_ context.Context, r ports.SCMCommandRequest) (ports.SCMCommandResult, error) {
+	f.called = ports.SCMCommandMerge
+	return ports.SCMCommandResult{Provider: domain.SCMProviderGitHub, Command: r.Command, ChangeRequest: r.ChangeRequest}, nil
+}
+func (f *fakeCommandProvider) Close(context.Context, ports.SCMCommandRequest) (ports.SCMCommandResult, error) {
+	return ports.SCMCommandResult{}, nil
+}
+func (f *fakeCommandProvider) Comment(context.Context, ports.SCMCommandRequest) (ports.SCMCommandResult, error) {
+	return ports.SCMCommandResult{}, nil
+}
+func (f *fakeCommandProvider) Assign(context.Context, ports.SCMCommandRequest) (ports.SCMCommandResult, error) {
+	return ports.SCMCommandResult{}, nil
+}
+func (f *fakeCommandProvider) Checkout(context.Context, ports.SCMCommandRequest) (ports.SCMCommandResult, error) {
+	return ports.SCMCommandResult{}, nil
+}
+
+type fakeRefresh struct{ called bool }
+
+func (f *fakeRefresh) Invalidate(context.Context, domain.SCMSubject, string) error {
+	f.called = true
+	return nil
+}
+
+func TestMergeInvalidatesProviderCacheAndRefreshes(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	subj := domain.SCMSubject{SessionID: "s1", ProjectID: "p1", Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "o/r", Branch: "feat/27", PRNumber: 7, CredentialHash: "cred"}
+	if err := st.UpsertSubject(ctx, subj); err != nil {
+		t.Fatal(err)
+	}
+	key := domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: "checks", Key: "sha"}
+	if err := st.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: key, ETag: "etag"}); err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeCommandProvider{}
+	refresh := &fakeRefresh{}
+	svc := New(st, refresh, provider)
+	res, err := svc.MergeChangeRequest(ctx, "s1", ports.SCMCommandRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.called != ports.SCMCommandMerge || res.ChangeRequest.Number != 7 {
+		t.Fatalf("provider called=%s result=%+v", provider.called, res)
+	}
+	if _, ok, _ := st.GetProviderCache(ctx, key); ok {
+		t.Fatal("merge should invalidate check cache")
+	}
+	if !refresh.called {
+		t.Fatal("command should trigger observer refresh")
+	}
+}
