@@ -19,15 +19,15 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
-	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/project"
 )
 
 // ProjectsController owns the 7 canonical /projects routes. The controller
-// depends ONLY on ports.ProjectManager — it doesn't know whether the impl
-// reaches into the registry, the LCM, an adapter, or all three. Mgr is nil
-// while handlers are stubs; impl PRs supply a real ProjectManager.
+// depends ONLY on project.Manager — it doesn't know whether the impl reaches
+// into the registry, the LCM, an adapter, or all three. Mgr is nil while
+// handlers are stubs; the handler-impl PR supplies a real project.Manager.
 type ProjectsController struct {
-	Mgr ports.ProjectManager
+	Mgr project.Manager
 }
 
 // Register mounts the project routes on the supplied router. Route order

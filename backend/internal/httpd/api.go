@@ -9,20 +9,21 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
-	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/project"
 )
 
 // APIDeps bundles every Manager the API layer's controllers depend on. There
-// is exactly one *Manager per resource and the controllers see ONLY that
-// interface — they don't reach past it to inbound/outbound ports, the LCM,
-// or adapters. Whether a Manager impl talks to the registry, the LCM, or
-// an outbound port is its own concern.
+// is exactly one Manager per resource, defined in that resource's own package
+// (project.Manager, later session.Manager, ...), and the controllers see ONLY
+// that interface — they don't reach past it to the LCM, adapters, or stores.
+// Whether a Manager impl talks to the registry, the LCM, or an outbound port
+// is its own concern.
 //
-// The route-shell PR (#20) leaves every field nil — handlers don't
-// dereference them yet. Impl PRs in the same lane wire real Managers and
-// flip stubs to real logic one route at a time.
+// The route-shell PR (#20) leaves every field nil — handlers answer via
+// apispec.NotImplemented and don't dereference them yet. The handler-impl PR
+// wires real Managers and flips stubs to real logic one route at a time.
 type APIDeps struct {
-	Projects ports.ProjectManager
+	Projects project.Manager
 }
 
 // API owns one controller per resource and is the single Register call the
