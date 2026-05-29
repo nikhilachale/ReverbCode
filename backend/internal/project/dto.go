@@ -3,17 +3,17 @@ package project
 import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 
 // Request/response shapes for Manager. They carry the data across the service
-// boundary; the canonical entities (Project, ProjectSummary, DegradedProject)
-// stay in domain/. Named without a "Project" prefix because the package name
-// already supplies it (project.AddInput, project.GetResult).
+// boundary; the entities they reference (Project, Summary, Degraded) live in
+// types.go in this same package. Named without a "Project" prefix because the
+// package name already supplies it (project.AddInput, project.GetResult).
 
 // GetResult is the discriminated union returned by Manager.Get. Exactly one of
 // Project / Degraded is non-nil; Status mirrors the discriminator on the wire
 // so consumers branch on it without nil-checking both fields.
 type GetResult struct {
-	Status   string                  // "ok" | "degraded"
-	Project  *domain.Project         // populated when Status == "ok"
-	Degraded *domain.DegradedProject // populated when Status == "degraded"
+	Status   string    // "ok" | "degraded"
+	Project  *Project  // populated when Status == "ok"
+	Degraded *Degraded // populated when Status == "degraded"
 }
 
 // AddInput is the body shape for POST /api/v1/projects. Path is required;
@@ -30,11 +30,11 @@ type AddInput struct {
 // behaviour fields are mutable; identity fields (projectId, path, repo,
 // defaultBranch) are rejected by the handler with a 400 IDENTITY_FROZEN.
 type UpdateConfigInput struct {
-	Agent     *string                            `json:"agent,omitempty"`
-	Runtime   *string                            `json:"runtime,omitempty"`
-	Tracker   *domain.TrackerConfig              `json:"tracker,omitempty"`
-	SCM       *domain.SCMConfig                  `json:"scm,omitempty"`
-	Reactions *map[string]*domain.ReactionConfig `json:"reactions,omitempty"`
+	Agent     *string                     `json:"agent,omitempty"`
+	Runtime   *string                     `json:"runtime,omitempty"`
+	Tracker   *TrackerConfig              `json:"tracker,omitempty"`
+	SCM       *SCMConfig                  `json:"scm,omitempty"`
+	Reactions *map[string]*ReactionConfig `json:"reactions,omitempty"`
 }
 
 // RemoveResult reports what DELETE /api/v1/projects/{id} actually did.

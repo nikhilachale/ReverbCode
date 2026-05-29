@@ -21,23 +21,23 @@ import (
 type Manager interface {
 	// List returns every registered project, including degraded entries
 	// (those whose config failed to load but whose registry entry survives).
-	List(ctx context.Context) ([]domain.ProjectSummary, error)
+	List(ctx context.Context) ([]Summary, error)
 
 	// Get returns one project, discriminating ok vs degraded via GetResult.
 	Get(ctx context.Context, id domain.ProjectID) (GetResult, error)
 
 	// Add registers a new project from a git repository path.
-	Add(ctx context.Context, in AddInput) (domain.Project, error)
+	Add(ctx context.Context, in AddInput) (Project, error)
 
 	// UpdateConfig patches behaviour-only fields; identity fields are frozen.
-	UpdateConfig(ctx context.Context, id domain.ProjectID, patch UpdateConfigInput) (domain.Project, error)
+	UpdateConfig(ctx context.Context, id domain.ProjectID, patch UpdateConfigInput) (Project, error)
 
 	// Remove unregisters a project, stopping its sessions and reclaiming
 	// managed workspaces.
 	Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error)
 
 	// Repair recovers a degraded project where automatic repair is available.
-	Repair(ctx context.Context, id domain.ProjectID) (domain.Project, error)
+	Repair(ctx context.Context, id domain.ProjectID) (Project, error)
 
 	// Reload invalidates cached config and re-scans the global registry.
 	Reload(ctx context.Context) (ReloadResult, error)
