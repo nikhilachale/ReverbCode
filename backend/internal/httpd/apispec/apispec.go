@@ -115,7 +115,7 @@ type notImplementedResponse struct {
 	Code      string         `json:"code"`
 	Message   string         `json:"message"`
 	RequestID string         `json:"requestId,omitempty"`
-	Spec      map[string]any `json:"spec,omitempty"`
+	Spec      map[string]any `json:"spec"`
 }
 
 // NotImplemented writes the locked 501 envelope, embedding the OpenAPI
