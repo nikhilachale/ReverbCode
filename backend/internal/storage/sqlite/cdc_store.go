@@ -11,9 +11,12 @@ import (
 )
 
 // OutboxEvent is a single undelivered change, joined from outbox + change_log.
-// It is the unit the CDC publisher drains to JSONL.
+// It is the unit the CDC publisher drains to JSONL. Attempts is the row's
+// current outbox.attempts counter (reflecting past failures), so the publisher
+// can detect a wedged row and step past it.
 type OutboxEvent struct {
 	OutboxID  int64
+	Attempts  int64
 	Seq       int64
 	SessionID string
 	EventType string
@@ -32,6 +35,7 @@ func (s *Store) ListUnsent(ctx context.Context, limit int) ([]OutboxEvent, error
 	for _, r := range rows {
 		out = append(out, OutboxEvent{
 			OutboxID:  r.ID,
+			Attempts:  r.Attempts,
 			Seq:       r.ChangeLogSeq,
 			SessionID: r.SessionID,
 			EventType: r.EventType,

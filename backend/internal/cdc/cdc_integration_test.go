@@ -2,6 +2,7 @@ package cdc_test
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ func (a outboxAdapter) ListUnsent(ctx context.Context, limit int) ([]cdc.Pending
 	for i, e := range evs {
 		out[i] = cdc.PendingEvent{
 			OutboxID: e.OutboxID,
+			Attempts: e.Attempts,
 			Event: cdc.Event{
 				Seq:       e.Seq,
 				SessionID: e.SessionID,
@@ -251,7 +253,18 @@ func TestRotationTriggersResync(t *testing.T) {
 	bc := cdc.NewBroadcaster()
 	bc.Subscribe(func(e cdc.Event) { got = append(got, e) })
 
-	snap := fakeSnapshot{events: []cdc.Event{{Seq: 5, SessionID: "s1", EventType: "session_updated"}}, maxSeq: 5}
+	// Seed N=2 snapshot events with distinct seqs ending at maxSeq, mirroring
+	// the production snapshotSource (cdc_wiring.go) after the S3 fix. The
+	// older "all events share Seq: maxSeq" shape would cause per-seq dedup in
+	// the broadcaster's subscribers to drop N-1 of N — assert distinct seqs
+	// below.
+	snap := fakeSnapshot{
+		events: []cdc.Event{
+			{Seq: 4, SessionID: "s1", EventType: "session_snapshot"},
+			{Seq: 5, SessionID: "s2", EventType: "session_snapshot"},
+		},
+		maxSeq: 5,
+	}
 	con := cdc.NewConsumer("fe", dir+"/"+cdc.LogFileName, store, bc, cdc.ConsumerConfig{Snapshot: snap})
 	if _, err := con.Start(ctx); err != nil {
 		t.Fatal(err)
@@ -288,14 +301,156 @@ func TestRotationTriggersResync(t *testing.T) {
 	if len(got) <= cursorBefore {
 		t.Fatal("expected resync to deliver the snapshot event")
 	}
-	// The snapshot event (seq 5) must be among the delivered events.
-	var sawSnapshot bool
+	// Both snapshot events (seq 4 and 5) must be among the delivered events
+	// with distinct seqs — the S3 fix means a snapshot of N sessions emits N
+	// uniquely-keyed events instead of collapsing them all to maxSeq.
+	seen := map[int64]bool{}
 	for _, e := range got {
-		if e.Seq == 5 {
+		seen[e.Seq] = true
+	}
+	if !seen[4] || !seen[5] {
+		t.Fatalf("resync did not deliver every snapshot event (need seq 4 and 5); got %+v", got)
+	}
+}
+
+// TestConsumerStartResyncsAcrossRestartWithRotation pins the B1 fix: across a
+// process restart that straddles a JSONL rotation, the consumer's first Poll
+// cannot detect the rotation (prevInfo nil, cursor 0). Without the fix every
+// event in the rotated-out archive between lastSeq+1 and the rotation point
+// is silently dropped from the live stream — only the final-state version
+// reappears via a future snapshot (if rotation ever happens again).
+//
+// Scenario:
+//   1. Consumer delivered seq 1..5 and durably stored offset = 5.
+//   2. Publisher drained seq 6..10 to the same JSONL file (still active),
+//      consumer was killed before processing them.
+//   3. JSONL rotated: jsonl -> jsonl.1 (carries seq 1..10). Fresh jsonl gets
+//      seq 11..15.
+//   4. New consumer starts with offset = 5, prevInfo = nil, cursor = 0.
+//      Without B1 it reads the fresh jsonl, sees seq 11..15 (all > lastSeq),
+//      delivers them, and seq 6..10 are lost forever from the live stream.
+//      With B1 it resyncs from the snapshot source first, so the gap is
+//      closed (subscribers see at least the final state for each session
+//      that had events in 6..10), lastSeq advances past the gap, and the
+//      live stream resumes correctly.
+func TestConsumerStartResyncsAcrossRestartWithRotation(t *testing.T) {
+	ctx := context.Background()
+	store := newStore(t)
+	dir := t.TempDir()
+	logPath := dir + "/" + cdc.LogFileName
+
+	log, err := cdc.OpenLog(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	pub := cdc.NewPublisher(outboxAdapter{store}, log, cdc.PublisherConfig{})
+
+	// 1) Seed 5 events (seq 1..5), drain to JSONL.
+	for i := 0; i < 5; i++ {
+		id := "s" + string(rune('1'+i))
+		if err := store.Upsert(ctx, rec(id), ports.EventSessionCreated); err != nil {
+			t.Fatalf("seed upsert: %v", err)
+		}
+	}
+	if err := pub.Drain(ctx); err != nil {
+		t.Fatalf("first drain: %v", err)
+	}
+	// Pre-seed the durable offset as if a prior consumer delivered seq 1..5.
+	if err := store.SetOffset(ctx, "fe", 5, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2) Publisher writes seq 6..10 to the *same* jsonl file (still active),
+	//    but the consumer was killed before processing — they will end up
+	//    stranded in the archive.
+	for i := 0; i < 5; i++ {
+		id := "u" + string(rune('1'+i))
+		if err := store.Upsert(ctx, rec(id), ports.EventSessionCreated); err != nil {
+			t.Fatalf("upsert pre-rotate: %v", err)
+		}
+	}
+	if err := pub.Drain(ctx); err != nil {
+		t.Fatalf("drain pre-rotate: %v", err)
+	}
+
+	// 3) Rotate jsonl -> jsonl.1 (carries seq 1..10) and create a fresh
+	//    active jsonl. Then write seq 11..15 to the new active file.
+	if err := log.Close(); err != nil {
+		t.Fatalf("close log for rotate: %v", err)
+	}
+	archive := logPath + ".1"
+	_ = os.Remove(archive)
+	if err := os.Rename(logPath, archive); err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	freshLog, err := cdc.OpenLog(dir, 0)
+	if err != nil {
+		t.Fatalf("reopen fresh log: %v", err)
+	}
+	defer freshLog.Close()
+	freshPub := cdc.NewPublisher(outboxAdapter{store}, freshLog, cdc.PublisherConfig{})
+	for i := 0; i < 5; i++ {
+		id := "v" + string(rune('1'+i))
+		if err := store.Upsert(ctx, rec(id), ports.EventSessionCreated); err != nil {
+			t.Fatalf("upsert post-rotate: %v", err)
+		}
+	}
+	if err := freshPub.Drain(ctx); err != nil {
+		t.Fatalf("drain post-rotate: %v", err)
+	}
+
+	// 4) Bring up a fresh consumer with offset = 5 and prevInfo = nil. The
+	//    snapshot source reports the full live-state seq frontier (15).
+	//    Without B1 the resync never fires on startup; with B1 it does and
+	//    advances lastSeq past the rotated-out gap.
+	snap := fakeSnapshot{
+		events: []cdc.Event{
+			// One snapshot event per live session at the seq frontier
+			// (covers the seq 6..10 archive gap by terminal state).
+			{Seq: 11, SessionID: "u1", EventType: "session_snapshot"},
+			{Seq: 12, SessionID: "u2", EventType: "session_snapshot"},
+			{Seq: 13, SessionID: "u3", EventType: "session_snapshot"},
+			{Seq: 14, SessionID: "u4", EventType: "session_snapshot"},
+			{Seq: 15, SessionID: "u5", EventType: "session_snapshot"},
+		},
+		maxSeq: 15,
+	}
+	bc := cdc.NewBroadcaster()
+	var got []cdc.Event
+	bc.Subscribe(func(e cdc.Event) { got = append(got, e) })
+	con := cdc.NewConsumer("fe", logPath, store, bc, cdc.ConsumerConfig{Snapshot: snap})
+	if _, err := con.Start(ctx); err != nil {
+		t.Fatalf("start consumer: %v", err)
+	}
+	if err := con.Poll(ctx); err != nil {
+		t.Fatalf("poll consumer: %v", err)
+	}
+
+	// B1 invariant: the consumer MUST have resynced from the snapshot on
+	// startup, otherwise seq 6..10 are silently dropped (they were in the
+	// archive; the fresh jsonl only holds seq 11..15). With the fix, the
+	// snapshot events (which carry the live-state frontier up to seq 15)
+	// are delivered before the live stream resumes. Without the fix, only
+	// seq 11..15 from the fresh file are delivered, with no signal that
+	// seq 6..10 ever existed.
+	sawSnapshot := false
+	for _, e := range got {
+		if e.EventType == "session_snapshot" {
 			sawSnapshot = true
+			break
 		}
 	}
 	if !sawSnapshot {
-		t.Fatalf("resync did not deliver snapshot event; got %+v", got)
+		t.Fatal("B1: consumer did not resync from snapshot on startup; events in the rotated-out archive (seq 6..10) are silently dropped")
+	}
+
+	// Offset must have advanced to at least 15 (the snapshot maxSeq); the
+	// rotated-out archive's seq 6..10 are covered transitively by the
+	// snapshot's final-state events.
+	off, _ := store.GetOffset(ctx, "fe")
+	if off < 15 {
+		t.Fatalf("B1: offset after resync = %d, want >= 15", off)
 	}
 }
+

@@ -82,12 +82,26 @@ func NewConsumer(name, path string, offsets OffsetStore, bcast *Broadcaster, cfg
 
 // Start loads the durable offset and runs the poll loop until ctx is cancelled;
 // the returned channel closes when the loop has exited.
+//
+// On startup it unconditionally resyncs from the SnapshotSource (if wired)
+// before entering the poll loop. The first Poll cannot detect a rotation that
+// happened while the consumer was down (prevInfo is nil, cursor is 0, so
+// neither the os.SameFile nor the size-shrunk branch fires), which would
+// otherwise silently drop every event in the rotated-out archive between
+// lastSeq+1 and the rotation point. Snapshot() is O(live sessions) and runs
+// exactly once per process, so the unconditional path is cheap and correct.
 func (c *Consumer) Start(ctx context.Context) (<-chan struct{}, error) {
 	seq, err := c.offsets.GetOffset(ctx, c.name)
 	if err != nil {
 		return nil, fmt.Errorf("load consumer offset: %w", err)
 	}
 	c.lastSeq = seq
+
+	if c.snapshot != nil {
+		if err := c.resync(ctx); err != nil {
+			return nil, err
+		}
+	}
 
 	done := make(chan struct{})
 	go func() {

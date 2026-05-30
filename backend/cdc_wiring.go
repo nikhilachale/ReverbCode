@@ -84,6 +84,7 @@ func (a outboxAdapter) ListUnsent(ctx context.Context, limit int) ([]cdc.Pending
 	for i, e := range evs {
 		out[i] = cdc.PendingEvent{
 			OutboxID: e.OutboxID,
+			Attempts: e.Attempts,
 			Event: cdc.Event{
 				Seq:       e.Seq,
 				SessionID: e.SessionID,
@@ -123,14 +124,21 @@ func (s snapshotSource) Snapshot(ctx context.Context) ([]cdc.Event, int64, error
 		return nil, 0, err
 	}
 	events := make([]cdc.Event, 0, len(recs))
-	for _, r := range recs {
+	n := int64(len(recs))
+	for i, r := range recs {
 		r.Lifecycle.Version = domain.LifecycleVersion
 		blob, err := json.Marshal(r)
 		if err != nil {
 			return nil, 0, fmt.Errorf("marshal snapshot %s: %w", r.ID, err)
 		}
+		// Stamp each snapshot event with a unique seq so subscribers that
+		// dedup by seq (a documented idempotency key) don't drop N-1 of N
+		// events. The last event in the slice keeps Seq == maxSeq so the
+		// "snapshot ends at maxSeq" invariant holds and the consumer's
+		// lastSeq advance still lands on maxSeq.
+		seq := maxSeq - (n - 1 - int64(i))
 		events = append(events, cdc.Event{
-			Seq:       maxSeq,
+			Seq:       seq,
 			SessionID: string(r.ID),
 			EventType: "session_snapshot",
 			Revision:  int64(r.Lifecycle.Revision),

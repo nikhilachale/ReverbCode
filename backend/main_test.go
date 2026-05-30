@@ -108,10 +108,16 @@ func TestSnapshotSourceRebuildsState(t *testing.T) {
 	if len(events) != 2 {
 		t.Fatalf("want one event per session (2), got %d", len(events))
 	}
-	for _, e := range events {
-		if e.Seq != maxSeq {
-			t.Errorf("snapshot event seq = %d, want resume watermark %d", e.Seq, maxSeq)
+	// Each snapshot event must have a distinct seq so subscribers that dedup by
+	// seq don't drop N-1 of the N emitted events. The last event in the slice
+	// pins Seq == maxSeq so the consumer's "snapshot ends at maxSeq" invariant
+	// (and the lastSeq advance) still holds.
+	seenSeq := map[int64]bool{}
+	for i, e := range events {
+		if seenSeq[e.Seq] {
+			t.Errorf("snapshot event %d has duplicate seq %d; subscribers dedup by seq", i, e.Seq)
 		}
+		seenSeq[e.Seq] = true
 		if e.EventType != "session_snapshot" {
 			t.Errorf("event type = %q, want session_snapshot", e.EventType)
 		}
@@ -130,5 +136,9 @@ func TestSnapshotSourceRebuildsState(t *testing.T) {
 		if !rec.Metadata.IsZero() {
 			t.Errorf("snapshot payload must exclude metadata, got %v", rec.Metadata)
 		}
+	}
+	// Last event pins Seq == maxSeq so the consumer resumes at the right floor.
+	if got := events[len(events)-1].Seq; got != maxSeq {
+		t.Errorf("last snapshot event seq = %d, want maxSeq %d", got, maxSeq)
 	}
 }
