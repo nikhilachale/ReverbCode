@@ -350,9 +350,6 @@ components:
           oneOf:
             - $ref: "#/components/schemas/Project"
             - $ref: "#/components/schemas/DegradedProject"
-          discriminator:
-            propertyName: status
-
     AddProjectRequest:
       type: object
       required: [path]

@@ -91,8 +91,12 @@ func (s *MemoryStore) Update(_ context.Context, p Project) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, ok := s.projects[p.ID]; !ok {
+	prev, ok := s.projects[p.ID]
+	if !ok {
 		return notFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	if prev.Path != "" && prev.Path != p.Path {
+		delete(s.paths, prev.Path)
 	}
 	s.projects[p.ID] = cloneProject(p)
 	s.paths[p.Path] = p.ID
