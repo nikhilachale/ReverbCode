@@ -37,6 +37,12 @@ const (
 	// (matching the legacy gh CLI default) when the caller passes 0.
 	defaultListLimit = 30
 	maxListLimit     = 100
+
+	// bootTokenProbeTimeout bounds the construction-time token probe so a
+	// hung `gh auth token` fallback (broken shell, unhealthy PATH) cannot
+	// stall daemon startup. gh is sub-100ms on a healthy box; 5s gives
+	// ~50x headroom without making daemon-start feel slow.
+	bootTokenProbeTimeout = 5 * time.Second
 )
 
 // Sentinel errors. Adapter-level callers should match on these via
@@ -112,7 +118,7 @@ func New(opts Options) (*Tracker, error) {
 	if src == nil {
 		return nil, ErrNoToken
 	}
-	bootCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	bootCtx, cancel := context.WithTimeout(context.Background(), bootTokenProbeTimeout)
 	defer cancel()
 	if _, err := src.Token(bootCtx); err != nil {
 		return nil, err

@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -64,21 +65,40 @@ func (s EnvTokenSource) Token(ctx context.Context) (string, error) {
 	if gh == nil {
 		gh = ghAuthToken
 	}
-	if v, err := gh(ctx); err == nil {
+	v, err := gh(ctx)
+	if err == nil {
 		if v = strings.TrimSpace(v); v != "" {
 			return v, nil
 		}
+		// gh succeeded with empty stdout — same outcome as no token, but
+		// no underlying error to carry forward. Fall through to plain ErrNoToken.
+		return "", ErrNoToken
 	}
-	return "", ErrNoToken
+	// gh failed. "Binary missing" is the uninteresting case — the user
+	// simply doesn't have gh installed, and we'd be noise to surface it.
+	// Anything else (not logged in, network blip, hung subprocess) carries
+	// operator-useful explanation we should preserve so a daemon log shows
+	// WHY zero-config auth fell through, not just THAT it did.
+	if errors.Is(err, exec.ErrNotFound) {
+		return "", ErrNoToken
+	}
+	return "", fmt.Errorf("%w (gh fallback: %v)", ErrNoToken, err)
 }
 
 // ghAuthToken shells out to the `gh` CLI and asks it for the user's
-// currently logged-in token. Returns an error if gh is not installed or
-// the user is not authenticated; the EnvTokenSource fallback chain
-// swallows that error and reports ErrNoToken instead.
+// currently logged-in token. On non-zero exit, gh writes its explanation
+// ("not logged in to any GitHub hosts. Try `gh auth login`") to stderr;
+// we capture it and fold it into the returned error so callers can surface
+// the cause.
 func ghAuthToken(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "gh", "auth", "token").Output()
+	cmd := exec.CommandContext(ctx, "gh", "auth", "token")
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return "", fmt.Errorf("%w: %s", err, msg)
+		}
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
