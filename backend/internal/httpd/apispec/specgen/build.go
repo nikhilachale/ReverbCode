@@ -11,8 +11,8 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/swaggest/jsonschema-go"
-	"github.com/swaggest/openapi-go"
+	jsonschema "github.com/swaggest/jsonschema-go"
+	openapi "github.com/swaggest/openapi-go"
 	"github.com/swaggest/openapi-go/openapi31"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
@@ -37,8 +37,12 @@ func Build() ([]byte, error) {
 	// Derive `required` from the idiomatic Go convention: a JSON field without
 	// `omitempty` is required. swaggest does not infer this on its own, so the
 	// structs stay clean (only description/enum tags) and this hook adds the
-	// required array.
-	r.DefaultOptions = append(r.DefaultOptions, jsonschema.InterceptProp(requiredFromJSONTag))
+	// required array. nonNullableSlices drops the spurious "null" type swaggest
+	// stamps on every Go slice.
+	r.DefaultOptions = append(r.DefaultOptions,
+		jsonschema.InterceptProp(requiredFromJSONTag),
+		jsonschema.InterceptNullability(nonNullableSlices),
+	)
 	// Clean component schema names (which become the generated TS type names):
 	// swaggest defaults to PackageType, e.g. "ProjectProject", "EnvelopeAPIError".
 	r.InterceptDefName(schemaName)
@@ -63,8 +67,14 @@ func Build() ([]byte, error) {
 		oc.SetID(op.id)
 		oc.SetSummary(op.summary)
 		oc.SetTags("projects")
-		for _, req := range op.reqs {
-			oc.AddReqStructure(req)
+		for _, param := range op.pathParams {
+			oc.AddReqStructure(param)
+		}
+		if op.reqBody != nil {
+			// AddReqStructure leaves requestBody.required absent, which
+			// OpenAPI reads as optional. These bodies are mandatory, so force
+			// it — otherwise validators/generators treat the body as skippable.
+			oc.AddReqStructure(op.reqBody, openapi.WithCustomize(markRequestBodyRequired))
 		}
 		for _, resp := range op.resps {
 			oc.AddRespStructure(resp.body, openapi.WithHTTPStatus(resp.status))
@@ -77,26 +87,68 @@ func Build() ([]byte, error) {
 	return r.Spec.MarshalYAML()
 }
 
-// schemaName maps swaggest's default PackageType component names to clean,
-// stable schema names (these become the generated TypeScript type names).
+// schemaName maps swaggest's default PackageType component names (e.g.
+// "ProjectProject", "EnvelopeAPIError") to the clean, stable schema names that
+// become the generated TypeScript type names. Every reflected type is listed
+// explicitly: an unrecognised default name is returned verbatim, so a new type
+// surfaces as a visibly-wrong "PackageType" name in the diff (and the drift
+// test) rather than silently colliding with an existing schema via a
+// TrimPrefix catch-all.
 func schemaName(_ reflect.Type, defaultName string) string {
-	switch defaultName {
-	case "EnvelopeAPIError":
-		return "APIError"
-	case "DomainProjectID":
-		return "ProjectID"
-	case "ControllersListProjectsResponse":
-		return "ListProjectsResponse"
-	case "ControllersProjectResponse":
-		return "ProjectResponse"
-	case "ControllersGetProjectResponse":
-		return "ProjectGetResponse"
-	case "ControllersProjectOrDegraded":
-		return "ProjectOrDegraded"
+	if clean, ok := schemaNames[defaultName]; ok {
+		return clean
 	}
-	// project.* types: "ProjectProject" -> "Project", "ProjectSummary" -> "Summary",
-	// "ProjectAddInput" -> "AddInput", "ProjectTrackerConfig" -> "TrackerConfig", etc.
-	return strings.TrimPrefix(defaultName, "Project")
+	return defaultName
+}
+
+// schemaNames is the exhaustive default→clean mapping for every type reflected
+// by projectOperations(). Add an entry when a new contract type is introduced;
+// the drift test fails until the spec is regenerated, which flags the gap.
+var schemaNames = map[string]string{
+	// httpd/envelope
+	"EnvelopeAPIError": "APIError",
+	// domain
+	"DomainProjectID": "ProjectID",
+	// httpd/controllers (wire envelopes)
+	"ControllersListProjectsResponse": "ListProjectsResponse",
+	"ControllersProjectResponse":      "ProjectResponse",
+	"ControllersGetProjectResponse":   "ProjectGetResponse",
+	"ControllersProjectOrDegraded":    "ProjectOrDegraded",
+	// project (entities + DTOs)
+	"ProjectProject":           "Project",
+	"ProjectSummary":           "Summary",
+	"ProjectDegraded":          "Degraded",
+	"ProjectAddInput":          "AddInput",
+	"ProjectUpdateConfigInput": "UpdateConfigInput",
+	"ProjectRemoveResult":      "RemoveResult",
+	"ProjectReloadResult":      "ReloadResult",
+	"ProjectTrackerConfig":     "TrackerConfig",
+	"ProjectSCMConfig":         "SCMConfig",
+	"ProjectSCMWebhookConfig":  "SCMWebhookConfig",
+	"ProjectReactionConfig":    "ReactionConfig",
+}
+
+// markRequestBodyRequired sets requestBody.required: true on the operation's
+// JSON body. swaggest leaves it absent (== optional) for AddReqStructure bodies.
+func markRequestBodyRequired(cor openapi.ContentOrReference) {
+	if rb, ok := cor.(*openapi31.RequestBodyOrReference); ok && rb.RequestBody != nil {
+		rb.RequestBody.WithRequired(true)
+	}
+}
+
+// nonNullableSlices drops the "null" that swaggest unions into every Go slice
+// type (a nil slice marshals as JSON null). A required array field should be
+// `T[]`, not `T[] | null`; the handlers normalise nil to an empty slice, so
+// null never reaches the wire. Byte slices (base64 strings) are left alone.
+func nonNullableSlices(p jsonschema.InterceptNullabilityParams) {
+	if !p.NullAdded || p.Type == nil || p.Type.Kind() != reflect.Slice {
+		return
+	}
+	if p.Type.Elem().Kind() == reflect.Uint8 {
+		return
+	}
+	p.Schema.TypeEns().WithSimpleTypes(jsonschema.Array)
+	p.Schema.Type.SliceOfSimpleTypeValues = nil
 }
 
 // requiredFromJSONTag marks a property required when its json tag lacks
@@ -139,7 +191,8 @@ type respUnit struct {
 
 type operation struct {
 	method, path, id, summary string
-	reqs                      []any
+	pathParams                []any // path/query param containers (e.g. ProjectIDParam)
+	reqBody                   any   // JSON request body struct, nil when the op takes none
 	resps                     []respUnit
 }
 
@@ -159,7 +212,7 @@ func projectOperations() []operation {
 		{
 			method: http.MethodPost, path: "/api/v1/projects", id: "addProject",
 			summary: "Register a new project from a git repository path",
-			reqs:    []any{project.AddInput{}},
+			reqBody: project.AddInput{},
 			resps: []respUnit{
 				{http.StatusCreated, controllers.ProjectResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
@@ -177,8 +230,8 @@ func projectOperations() []operation {
 		},
 		{
 			method: http.MethodGet, path: "/api/v1/projects/{id}", id: "getProject",
-			summary: "Fetch one project; discriminates ok vs degraded",
-			reqs:    []any{controllers.ProjectIDParam{}},
+			summary:    "Fetch one project; discriminates ok vs degraded",
+			pathParams: []any{controllers.ProjectIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.GetProjectResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},
@@ -187,8 +240,9 @@ func projectOperations() []operation {
 		},
 		{
 			method: http.MethodPatch, path: "/api/v1/projects/{id}", id: "updateProjectConfig",
-			summary: "Patch behaviour-only fields (identity is frozen)",
-			reqs:    []any{controllers.ProjectIDParam{}, project.UpdateConfigInput{}},
+			summary:    "Patch behaviour-only fields (identity is frozen)",
+			pathParams: []any{controllers.ProjectIDParam{}},
+			reqBody:    project.UpdateConfigInput{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ProjectResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
@@ -199,8 +253,8 @@ func projectOperations() []operation {
 		},
 		{
 			method: http.MethodDelete, path: "/api/v1/projects/{id}", id: "removeProject",
-			summary: "Remove a project; stops sessions, cleans workspaces, unregisters",
-			reqs:    []any{controllers.ProjectIDParam{}},
+			summary:    "Remove a project; stops sessions, cleans workspaces, unregisters",
+			pathParams: []any{controllers.ProjectIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, project.RemoveResult{}},
 				{http.StatusBadRequest, envelope.APIError{}},
@@ -210,8 +264,8 @@ func projectOperations() []operation {
 		},
 		{
 			method: http.MethodPost, path: "/api/v1/projects/{id}/repair", id: "repairProject",
-			summary: "Recover a degraded project where automatic repair is available",
-			reqs:    []any{controllers.ProjectIDParam{}},
+			summary:    "Recover a degraded project where automatic repair is available",
+			pathParams: []any{controllers.ProjectIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ProjectResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},

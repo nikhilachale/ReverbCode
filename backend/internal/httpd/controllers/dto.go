@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"encoding/json"
+	"errors"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/project"
 )
@@ -49,10 +50,19 @@ type ProjectOrDegraded struct {
 }
 
 func (p ProjectOrDegraded) MarshalJSON() ([]byte, error) {
-	if p.Degraded != nil {
+	switch {
+	case p.Degraded != nil:
 		return json.Marshal(p.Degraded)
+	case p.Project != nil:
+		return json.Marshal(p.Project)
+	default:
+		// Neither variant set — the spec declares `project` as a required
+		// oneOf[Project, Degraded], so emitting `null` would silently breach
+		// the contract. Fail loudly instead: a GetResult with both pointers
+		// nil is a Manager bug, and the encode error surfaces it rather than
+		// shipping an invalid body.
+		return nil, errors.New("controllers: ProjectOrDegraded has neither Project nor Degraded set")
 	}
-	return json.Marshal(p.Project)
 }
 
 // JSONSchemaOneOf is read by swaggest's reflector (apispec.Build) to emit the

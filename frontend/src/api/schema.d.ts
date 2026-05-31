@@ -100,7 +100,7 @@ export interface components {
             resolveError: string;
         };
         ListProjectsResponse: {
-            projects: components["schemas"]["Summary"][] | null;
+            projects: components["schemas"]["Summary"][];
         };
         Project: {
             agent?: string;
@@ -224,7 +224,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/json": components["schemas"]["AddInput"];
             };
@@ -369,7 +369,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/json": components["schemas"]["UpdateConfigInput"];
             };

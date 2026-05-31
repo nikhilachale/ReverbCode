@@ -48,6 +48,11 @@ func (c *ProjectsController) list(w http.ResponseWriter, r *http.Request) {
 		writeProjectError(w, r, err)
 		return
 	}
+	// The spec types `projects` as a non-nullable array; a nil slice would
+	// marshal as JSON null and breach that. Normalise so the wire is always [].
+	if projects == nil {
+		projects = []project.Summary{}
+	}
 	envelope.WriteJSON(w, http.StatusOK, ListProjectsResponse{Projects: projects})
 }
 

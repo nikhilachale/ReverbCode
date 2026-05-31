@@ -34,6 +34,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/AddInput'
+        required: true
       responses:
         "201":
           content:
@@ -148,6 +149,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/UpdateConfigInput'
+        required: true
       responses:
         "200":
           content:
@@ -296,9 +298,7 @@ components:
         projects:
           items:
             $ref: '#/components/schemas/Summary'
-          type:
-          - array
-          - "null"
+          type: array
       required:
       - projects
       type: object
