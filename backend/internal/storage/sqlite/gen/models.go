@@ -68,6 +68,9 @@ type PrComment struct {
 	Body      string
 	Resolved  int64
 	CreatedAt time.Time
+	ThreadID  string
+	Url       string
+	IsBot     int64
 }
 
 type Project struct {

@@ -7,6 +7,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/notification"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	scmevents "github.com/aoagents/agent-orchestrator/backend/internal/scm/events"
 	"github.com/aoagents/agent-orchestrator/backend/internal/session"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
@@ -97,6 +99,7 @@ func (a storeAdapter) WritePR(ctx context.Context, pr ports.PRRow, checks []port
 		commentRows[i] = sqlite.PRCommentRow{
 			PRURL: pr.URL, CommentID: c.ID, Author: c.Author, File: c.File,
 			Line: int64(c.Line), Body: c.Body, Resolved: c.Resolved, CreatedAt: c.CreatedAt,
+			ThreadID: c.ThreadID, URL: c.URL, IsBot: c.IsBot,
 		}
 	}
 	return a.Store.WritePRObservation(ctx, row, checkRows, commentRows)
@@ -388,6 +391,97 @@ func TestHappyPath_Spawn_PR_Kill(t *testing.T) {
 		if !seen[want] {
 			t.Fatalf("missing change_log event %q (got: %v)", want, seen)
 		}
+	}
+}
+
+func TestSCMSnapshotEventFeedsLCMAndDerivedPRStorage(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := openLiveStack(t, t.TempDir())
+	defer st.close(t)
+	seedProject(t, st.store, "mer")
+
+	sess, err := st.sm.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, Branch: "feat/27", Prompt: "ship scm",
+	})
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if err := st.lcm.ApplyActivitySignal(ctx, sess.ID, ports.ActivitySignal{
+		Valid: true, State: domain.ActivityActive, Source: domain.SourceHook, Timestamp: time.Now(),
+	}); err != nil {
+		t.Fatalf("activity: %v", err)
+	}
+	_ = st.messenger.drain()
+
+	prURL := "https://github.com/aoagents/agent-orchestrator/pull/28"
+	subj := domain.SCMSubject{
+		SessionID: sess.ID, ProjectID: "mer", Provider: domain.SCMProviderGitHub,
+		Host: "github.com", Repo: "aoagents/agent-orchestrator", Branch: "feat/27",
+		BaseBranch: "main", CredentialHash: "cred", PRNumber: 28, PRURL: prURL,
+	}
+	snap, changed, err := st.store.SaveSnapshot(ctx, domain.SCMSnapshot{
+		SessionID:  sess.ID,
+		Subject:    subj,
+		Freshness:  domain.SCMFreshnessFresh,
+		ObservedAt: time.Now(),
+		PR: &domain.SCMPullRequest{
+			Number: 28, URL: prURL, State: domain.PROpen, SourceBranch: "feat/27", TargetBranch: "main", HeadSHA: "sha1",
+		},
+		CI: domain.SCMCI{Summary: "failing", Checks: []domain.SCMCheck{{
+			Name: "build", Status: "completed", Conclusion: "failure", URL: "https://github.com/checks/1", LogTail: "last 20 lines",
+		}}},
+		Review: domain.SCMReview{
+			Decision: "changes_requested",
+			UnresolvedThreads: []domain.SCMReviewThread{{
+				ID: "thread-1", Path: "main.go", Line: 12, URL: "https://github.com/thread/1",
+				Comments: []domain.SCMReviewComment{{
+					ID: "comment-1", Author: "reviewer", Body: "fix this", URL: "https://github.com/comment/1", ThreadID: "thread-1",
+				}},
+			}},
+		},
+		Mergeability: domain.SCMMergeability{Conflict: true, NoConflicts: false, Blockers: []string{"merge conflicts"}, RawState: "DIRTY"},
+	})
+	if err != nil || !changed {
+		t.Fatalf("save scm snapshot changed=%v err=%v", changed, err)
+	}
+
+	rows, err := st.store.ReadChangeLogAfter(ctx, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var event cdc.Event
+	for _, row := range rows {
+		if row.EventType == string(cdc.EventSCMSnapshotCreated) && row.SessionID == string(sess.ID) {
+			event = cdc.Event{
+				Seq: row.Seq, ProjectID: row.ProjectID, SessionID: row.SessionID,
+				Type: cdc.EventType(row.EventType), Payload: json.RawMessage(row.Payload), CreatedAt: row.CreatedAt,
+			}
+			break
+		}
+	}
+	if event.Type == "" {
+		t.Fatalf("missing scm snapshot event after saving revision %d", snap.Revision)
+	}
+	consumer := scmevents.NewConsumer(st.store, st.lcm, nil)
+	if err := consumer.Handle(ctx, event); err != nil {
+		t.Fatalf("consume scm event: %v", err)
+	}
+
+	pr, ok, err := st.store.GetPR(ctx, prURL)
+	if err != nil || !ok {
+		t.Fatalf("derived pr missing ok=%v err=%v", ok, err)
+	}
+	if pr.CIState != string(domain.CIFailing) || pr.ReviewDecision != string(domain.ReviewChangesRequest) || pr.Mergeability != string(domain.MergeConflicting) {
+		t.Fatalf("derived pr wrong: %+v", pr)
+	}
+	checks, err := st.store.ListChecks(ctx, prURL)
+	if err != nil || len(checks) != 1 || checks[0].CommitHash != "sha1" || checks[0].LogTail != "last 20 lines" {
+		t.Fatalf("derived checks wrong: %+v err=%v", checks, err)
+	}
+	comments, err := st.store.ListPRComments(ctx, prURL)
+	if err != nil || len(comments) != 1 || comments[0].ThreadID != "thread-1" || comments[0].URL == "" {
+		t.Fatalf("derived comments wrong: %+v err=%v", comments, err)
 	}
 }
 

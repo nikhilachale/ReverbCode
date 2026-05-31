@@ -24,6 +24,7 @@ type SCMFacts struct {
 	Draft            bool
 	PRNumber         int
 	PRURL            string
+	HeadSHA          string
 	CISummary        CISummary
 	ReviewDecision   ReviewDecision
 	Mergeability     Mergeability
@@ -170,8 +171,9 @@ type PRCheckRow struct {
 	CreatedAt  time.Time
 }
 
-// PRComment is one review comment. Review feedback is injected into the agent
-// regardless of author, so there is no bot/human distinction.
+// PRComment is one review comment in the derived PR read model. The SCM facts
+// carry provider-specific thread/comment metadata; preserving it here keeps the
+// storage/read path from collapsing bot/human routing and thread URLs.
 type PRComment struct {
 	ID        string
 	Author    string
@@ -180,4 +182,7 @@ type PRComment struct {
 	Body      string
 	Resolved  bool
 	CreatedAt time.Time
+	ThreadID  string
+	URL       string
+	IsBot     bool
 }

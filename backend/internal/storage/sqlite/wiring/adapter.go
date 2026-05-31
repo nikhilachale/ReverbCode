@@ -87,6 +87,7 @@ func (a Adapter) WritePR(ctx context.Context, pr ports.PRRow, checks []ports.PRC
 		commentRows[i] = sqlite.PRCommentRow{
 			PRURL: pr.URL, CommentID: c.ID, Author: c.Author, File: c.File,
 			Line: int64(c.Line), Body: c.Body, Resolved: c.Resolved, CreatedAt: c.CreatedAt,
+			ThreadID: c.ThreadID, URL: c.URL, IsBot: c.IsBot,
 		}
 	}
 	return a.Store.WritePRObservation(ctx, row, checkRows, commentRows)

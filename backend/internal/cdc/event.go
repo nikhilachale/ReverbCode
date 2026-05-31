@@ -23,6 +23,8 @@ const (
 	EventPRCreated           EventType = "pr_created"
 	EventPRUpdated           EventType = "pr_updated"
 	EventPRCheckRecorded     EventType = "pr_check_recorded"
+	EventPRCommentRecorded   EventType = "pr_comment_recorded"
+	EventSCMSnapshotCreated  EventType = "scm_snapshot_created"
 	EventNotificationCreated EventType = "notification_created"
 	EventNotificationUpdated EventType = "notification_updated"
 )

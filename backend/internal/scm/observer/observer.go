@@ -282,6 +282,7 @@ func FactsFromSnapshot(s domain.SCMSnapshot) ports.SCMFacts {
 	f.Draft = s.PR.Draft
 	f.PRNumber = s.PR.Number
 	f.PRURL = s.PR.URL
+	f.HeadSHA = s.PR.HeadSHA
 	f.CISummary = ciSummary(s.CI.Summary)
 	f.ReviewDecision = reviewDecision(s.Review.Decision)
 	f.Mergeability = ports.Mergeability{

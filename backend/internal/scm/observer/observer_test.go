@@ -265,6 +265,84 @@ func TestSubjectsFromSessionsUsesConfigAndTypedBranchMetadataWithoutGitHubDefaul
 	}
 }
 
+func TestSchedulerDerivesSubjectsPreservesBindingsAndSkipsBackoff(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	session := domain.SessionRecord{
+		ID:        "p1-1",
+		ProjectID: "p1",
+		Lifecycle: domain.CanonicalSessionLifecycle{
+			Session: domain.SessionSubstate{State: domain.SessionWorking},
+		},
+		Metadata: domain.SessionMetadata{Branch: "feat/27"},
+	}
+	if err := st.UpsertSubject(ctx, domain.SCMSubject{
+		SessionID: "p1-1", ProjectID: "p1", Provider: domain.SCMProviderGitHub,
+		Host: "github.com", Repo: "aoagents/agent-orchestrator", Branch: "feat/old",
+		CredentialHash: "cred", PRNumber: 28, PRURL: "https://github.com/aoagents/agent-orchestrator/pull/28",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutPollState(ctx, domain.SCMPollState{
+		Key:          domain.SCMPollStateKey{Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "aoagents/agent-orchestrator"},
+		BackoffUntil: now.Add(time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	obs := &captureObserver{}
+	sched := &Scheduler{
+		Observer: obs,
+		Store:    st,
+		Projects: projectSourceStub{projects: []ProjectConfig{{
+			ID: "p1", RepoOriginURL: "https://github.com/aoagents/agent-orchestrator.git",
+		}}},
+		Sessions: sessionSourceStub{sessions: []domain.SessionRecord{session}},
+		Clock:    func() time.Time { return now },
+	}
+	subjects, err := sched.DeriveSubjects(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(subjects) != 1 {
+		t.Fatalf("subjects=%+v", subjects)
+	}
+	got := subjects[0]
+	if got.Provider != domain.SCMProviderGitHub || got.Host != "github.com" || got.Repo != "aoagents/agent-orchestrator" ||
+		got.Branch != "feat/27" || got.PRNumber != 28 || got.CredentialHash != "cred" {
+		t.Fatalf("derived subject did not preserve/resolve fields: %+v", got)
+	}
+	if err := sched.Poll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(obs.refreshed) != 0 {
+		t.Fatalf("backoff should skip refresh, got %+v", obs.refreshed)
+	}
+}
+
+type captureObserver struct{ refreshed []domain.SCMSubject }
+
+func (c *captureObserver) Refresh(_ context.Context, subjects []domain.SCMSubject) error {
+	c.refreshed = append(c.refreshed, subjects...)
+	return nil
+}
+func (c *captureObserver) RefreshSession(context.Context, domain.SessionID) error { return nil }
+func (c *captureObserver) Invalidate(context.Context, domain.SCMSubject, string) error {
+	return nil
+}
+
+type projectSourceStub struct{ projects []ProjectConfig }
+
+func (p projectSourceStub) ListSCMProjects(context.Context) ([]ProjectConfig, error) {
+	return p.projects, nil
+}
+
+type sessionSourceStub struct{ sessions []domain.SessionRecord }
+
+func (s sessionSourceStub) ListSCMSessions(context.Context) ([]domain.SessionRecord, error) {
+	return s.sessions, nil
+}
+
 func jsonLogger(buf *bytes.Buffer) *slog.Logger {
 	return slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 }

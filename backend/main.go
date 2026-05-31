@@ -80,11 +80,24 @@ func run() error {
 		return err
 	}
 
-	// Bring up the Lifecycle Manager (sole store writer) and the reaper (OBSERVE
-	// timer). This makes the write path live end-to-end: LCM write -> store -> DB
-	// trigger -> change_log -> poller -> broadcaster.
+	// Bring up the Lifecycle Manager (sole canonical writer), the runtime reaper,
+	// and the SCM observer. This makes both write paths live end-to-end:
+	//   LCM write -> store -> DB trigger -> change_log -> poller -> broadcaster
+	//   SCM poll -> scm_snapshots -> change_log -> SCM consumer -> LCM
+	// Collaborators that don't yet have production implementations (Notifier,
+	// AgentMessenger, runtime registry) are stubbed in lifecycle_wiring.go with
+	// TODO markers.
 	lcStack, err := startLifecycle(ctx, store, log)
 	if err != nil {
+		return err
+	}
+	scmStack, err := startSCM(ctx, store, lcStack.LCM, cdcPipe, log)
+	if err != nil {
+		stop()
+		lcStack.Stop()
+		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
+			log.Error("cdc pipeline shutdown", "err", cdcErr)
+		}
 		return err
 	}
 
@@ -103,6 +116,7 @@ func run() error {
 		// drained before the deferred store.Close() fires. Defers would hit
 		// the LIFO trap (see comment after srv.Run), hence explicit.
 		stop()
+		scmStack.Stop()
 		lcStack.Stop()
 		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
 			log.Error("cdc pipeline shutdown", "err", cdcErr)
@@ -118,6 +132,7 @@ func run() error {
 	// via defer) avoids the LIFO trap where a Stop() that blocks on ctx-cancel
 	// runs before the cancel — which would hang any non-signal exit path.
 	stop()
+	scmStack.Stop()
 	lcStack.Stop()
 	if err := cdcPipe.Stop(); err != nil {
 		log.Error("cdc pipeline shutdown", "err", err)

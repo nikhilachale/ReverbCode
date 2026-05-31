@@ -104,10 +104,11 @@ func (m *manager) Add(ctx context.Context, in AddInput) (Project, error) {
 	}
 
 	row := ProjectRow{
-		ID:           string(id),
-		Path:         path,
-		DisplayName:  name,
-		RegisteredAt: time.Now(),
+		ID:            string(id),
+		Path:          path,
+		RepoOriginURL: gitRemoteOrigin(path),
+		DisplayName:   name,
+		RegisteredAt:  time.Now(),
 	}
 	if err := m.store.Upsert(ctx, row); err != nil {
 		return Project{}, err
@@ -234,6 +235,14 @@ func isGitRepo(path string) bool {
 		return true
 	}
 	return top == path
+}
+
+func gitRemoteOrigin(path string) string {
+	out, err := exec.Command("git", "-C", path, "remote", "get-url", "origin").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func defaultProjectID(path string) domain.ProjectID {

@@ -20,7 +20,8 @@ func (q *Queries) DeletePRComments(ctx context.Context, prUrl string) error {
 }
 
 const listPRComments = `-- name: ListPRComments :many
-SELECT pr_url, comment_id, author, file, line, body, resolved, created_at FROM pr_comment WHERE pr_url = ? ORDER BY created_at, comment_id
+SELECT pr_url, comment_id, author, file, line, body, resolved, created_at, thread_id, url, is_bot
+FROM pr_comment WHERE pr_url = ? ORDER BY created_at, comment_id
 `
 
 func (q *Queries) ListPRComments(ctx context.Context, prUrl string) ([]PrComment, error) {
@@ -41,6 +42,9 @@ func (q *Queries) ListPRComments(ctx context.Context, prUrl string) ([]PrComment
 			&i.Body,
 			&i.Resolved,
 			&i.CreatedAt,
+			&i.ThreadID,
+			&i.Url,
+			&i.IsBot,
 		); err != nil {
 			return nil, err
 		}
@@ -56,11 +60,12 @@ func (q *Queries) ListPRComments(ctx context.Context, prUrl string) ([]PrComment
 }
 
 const upsertPRComment = `-- name: UpsertPRComment :exec
-INSERT INTO pr_comment (pr_url, comment_id, author, file, line, body, resolved, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO pr_comment (pr_url, comment_id, author, file, line, body, resolved, created_at, thread_id, url, is_bot)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (pr_url, comment_id) DO UPDATE SET
     author = excluded.author, file = excluded.file, line = excluded.line,
-    body = excluded.body, resolved = excluded.resolved
+    body = excluded.body, resolved = excluded.resolved,
+    thread_id = excluded.thread_id, url = excluded.url, is_bot = excluded.is_bot
 `
 
 type UpsertPRCommentParams struct {
@@ -72,6 +77,9 @@ type UpsertPRCommentParams struct {
 	Body      string
 	Resolved  int64
 	CreatedAt time.Time
+	ThreadID  string
+	Url       string
+	IsBot     int64
 }
 
 func (q *Queries) UpsertPRComment(ctx context.Context, arg UpsertPRCommentParams) error {
@@ -84,6 +92,9 @@ func (q *Queries) UpsertPRComment(ctx context.Context, arg UpsertPRCommentParams
 		arg.Body,
 		arg.Resolved,
 		arg.CreatedAt,
+		arg.ThreadID,
+		arg.Url,
+		arg.IsBot,
 	)
 	return err
 }

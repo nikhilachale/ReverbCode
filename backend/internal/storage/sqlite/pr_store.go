@@ -77,6 +77,7 @@ func (s *Store) WritePRObservation(ctx context.Context, pr PRRow, checks []PRChe
 			if err := q.UpsertPRComment(ctx, gen.UpsertPRCommentParams{
 				PrUrl: pr.URL, CommentID: cm.CommentID, Author: cm.Author, File: cm.File,
 				Line: cm.Line, Body: cm.Body, Resolved: boolToInt(cm.Resolved), CreatedAt: cm.CreatedAt,
+				ThreadID: cm.ThreadID, Url: cm.URL, IsBot: boolToInt(cm.IsBot),
 			}); err != nil {
 				return fmt.Errorf("comment %q: %w", cm.CommentID, err)
 			}
@@ -224,6 +225,9 @@ type PRCommentRow struct {
 	Body      string
 	Resolved  bool
 	CreatedAt time.Time
+	ThreadID  string
+	URL       string
+	IsBot     bool
 }
 
 // ReplacePRComments atomically replaces the full comment set for a PR (each SCM
@@ -245,6 +249,9 @@ func (s *Store) ReplacePRComments(ctx context.Context, prURL string, comments []
 				Body:      c.Body,
 				Resolved:  boolToInt(c.Resolved),
 				CreatedAt: c.CreatedAt,
+				ThreadID:  c.ThreadID,
+				Url:       c.URL,
+				IsBot:     boolToInt(c.IsBot),
 			}); err != nil {
 				return fmt.Errorf("comment %q: %w", c.CommentID, err)
 			}
@@ -264,6 +271,7 @@ func (s *Store) ListPRComments(ctx context.Context, prURL string) ([]PRCommentRo
 		out = append(out, PRCommentRow{
 			PRURL: c.PrUrl, CommentID: c.CommentID, Author: c.Author, File: c.File,
 			Line: c.Line, Body: c.Body, Resolved: c.Resolved != 0, CreatedAt: c.CreatedAt,
+			ThreadID: c.ThreadID, URL: c.Url, IsBot: c.IsBot != 0,
 		})
 	}
 	return out, nil

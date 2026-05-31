@@ -241,14 +241,15 @@ func scmFactsToPRObservation(f ports.SCMFacts) (ports.PRObservation, bool) {
 	}
 	for _, c := range f.CIFailedChecks {
 		o.Checks = append(o.Checks, ports.PRCheckRow{
-			Name:    firstNonEmpty(c.Name, "check"),
-			Status:  prCheckStatus(c),
-			URL:     c.URL,
-			LogTail: firstNonEmpty(c.LogTail, c.Details),
+			Name:       firstNonEmpty(c.Name, "check"),
+			CommitHash: f.HeadSHA,
+			Status:     prCheckStatus(c),
+			URL:        c.URL,
+			LogTail:    firstNonEmpty(c.LogTail, c.Details),
 		})
 	}
 	if f.CIFailureLogTail != nil && *f.CIFailureLogTail != "" && len(o.Checks) == 0 && o.CI == domain.CIFailing {
-		o.Checks = append(o.Checks, ports.PRCheckRow{Name: "ci", Status: "failed", LogTail: *f.CIFailureLogTail})
+		o.Checks = append(o.Checks, ports.PRCheckRow{Name: "ci", CommitHash: f.HeadSHA, Status: "failed", LogTail: *f.CIFailureLogTail})
 	}
 	for _, c := range f.PendingComments {
 		o.Comments = append(o.Comments, ports.PRComment{
@@ -258,6 +259,9 @@ func scmFactsToPRObservation(f ports.SCMFacts) (ports.PRObservation, bool) {
 			Line:     c.Line,
 			Body:     c.Body,
 			Resolved: false,
+			ThreadID: c.ThreadID,
+			URL:      c.URL,
+			IsBot:    c.IsBot,
 		})
 	}
 	return o, true
