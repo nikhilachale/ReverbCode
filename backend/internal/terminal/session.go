@@ -13,7 +13,7 @@ import (
 
 // PTYSource is what a terminal needs from the runtime: the argv that attaches a
 // PTY to a session's pane, and a liveness check used to decide whether a dropped
-// PTY should be re-attached or treated as a clean exit. The tmux runtime adapter
+// PTY should be re-attached or treated as a clean exit. The Zellij runtime adapter
 // satisfies this via AttachCommand/IsAlive; the interface lives here, next to its
 // only consumer, so terminal does not depend on a concrete adapter.
 type PTYSource interface {
@@ -35,7 +35,7 @@ type ptyProcess interface {
 // spawnFunc starts a PTY for argv. ctx cancellation must terminate the process.
 type spawnFunc func(ctx context.Context, argv []string) (ptyProcess, error)
 
-// reattach policy: a PTY that drops is re-attached while the underlying tmux
+// reattach policy: a PTY that drops is re-attached while the underlying Zellij
 // session is still alive, up to maxReattach consecutive failures. An attach that
 // survived longer than reattachResetGrace before dropping resets the counter, so
 // a long-lived pane that blips recovers but a tight crash-loop gives up.
@@ -152,7 +152,7 @@ func (s *session) copyOut(p ptyProcess) {
 }
 
 // shouldReattach decides whether a dropped/failed PTY warrants another attempt:
-// only while not closed/cancelled, the tmux session still exists, and we are
+// only while not closed/cancelled, the Zellij session still exists, and we are
 // under the consecutive-failure cap. A backoff sleep separates attempts.
 func (s *session) shouldReattach(ctx context.Context, failures int) bool {
 	if s.isClosed() || ctx.Err() != nil || failures > s.maxReattach {

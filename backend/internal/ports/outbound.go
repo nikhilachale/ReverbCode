@@ -8,8 +8,8 @@ import (
 )
 
 // SessionStore persists session records and serves the derived read-model's PR
-// facts. The Session Manager creates rows; the Lifecycle Manager is the sole
-// writer of canonical transitions thereafter.
+// facts. The Session Manager creates rows; the Lifecycle Manager owns
+// observer-driven updates thereafter.
 type SessionStore interface {
 	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
 	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
@@ -38,8 +38,7 @@ type Notifier interface {
 	Notify(ctx context.Context, event Event) error
 }
 
-// AgentMessenger injects a message into a running agent (busy-detecting until the
-// agent is ready). Used by the auto-nudge reactions.
+// AgentMessenger injects a message into a running agent. Used by auto-nudge reactions.
 type AgentMessenger interface {
 	Send(ctx context.Context, id domain.SessionID, message string) error
 }
@@ -89,8 +88,8 @@ type EscalationEvent struct {
 
 // ---- runtime / agent / workspace plugin ports (used by the Session Manager) ----
 
-// Runtime is where a session's agent process runs — a tmux/zellij session or a
-// bare process. The Session Manager creates one per session and tears it down.
+// Runtime is where a session's agent process runs — currently a Zellij session.
+// The Session Manager creates one per session and tears it down.
 type Runtime interface {
 	Create(ctx context.Context, cfg RuntimeConfig) (RuntimeHandle, error)
 	Destroy(ctx context.Context, handle RuntimeHandle) error
@@ -105,10 +104,9 @@ type RuntimeConfig struct {
 	Env           map[string]string
 }
 
-// RuntimeHandle identifies a live runtime instance (e.g. a tmux session).
+// RuntimeHandle identifies a live runtime instance (a Zellij session/pane handle).
 type RuntimeHandle struct {
-	ID          string
-	RuntimeName string
+	ID string
 }
 
 // Agent is the AI coding tool driving a session (claude-code, codex, …): it

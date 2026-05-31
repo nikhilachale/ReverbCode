@@ -34,15 +34,8 @@ func sampleRecord(project string) domain.SessionRecord {
 	return domain.SessionRecord{
 		ProjectID: domain.ProjectID(project),
 		Kind:      domain.KindWorker,
-		Lifecycle: domain.CanonicalSessionLifecycle{
-			Version: domain.LifecycleVersion,
-			Harness: domain.HarnessClaudeCode,
-			IsAlive: true,
-			Session: domain.SessionSubstate{State: domain.SessionWorking},
-			Activity: domain.ActivitySubstate{
-				State: domain.ActivityActive, LastActivityAt: now, Source: domain.SourceNative,
-			},
-		},
+		Harness:   domain.HarnessClaudeCode,
+		Activity:  domain.ActivitySubstate{State: domain.ActivityActive, LastActivityAt: now, Source: domain.SourceNative},
 		Metadata:  domain.SessionMetadata{Branch: "feat/x", WorkspacePath: "/ws"},
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -95,8 +88,8 @@ func TestSessionCreateAssignsPerProjectID(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("get: ok=%v err=%v", ok, err)
 	}
-	if got.Lifecycle.Session.State != domain.SessionWorking || !got.Lifecycle.IsAlive ||
-		got.Lifecycle.Harness != domain.HarnessClaudeCode || got.Metadata.Branch != "feat/x" {
+	if got.Activity.State != domain.ActivityActive || got.IsTerminated ||
+		got.Harness != domain.HarnessClaudeCode || got.Metadata.Branch != "feat/x" {
 		t.Fatalf("round-trip mismatch: %+v", got)
 	}
 	if list, _ := s.ListSessions(ctx, "mer"); len(list) != 2 {
@@ -107,32 +100,28 @@ func TestSessionCreateAssignsPerProjectID(t *testing.T) {
 	}
 }
 
-func TestSessionUpdateAndDetecting(t *testing.T) {
+func TestSessionUpdateActivityAndTermination(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	seedProject(t, s, "mer")
 	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
 
-	r.Lifecycle.Session = domain.SessionSubstate{State: domain.SessionDetecting}
-	r.Lifecycle.IsAlive = false
-	r.Lifecycle.Detecting = &domain.DetectingState{Attempts: 2, StartedAt: r.CreatedAt, EvidenceHash: "abc"}
+	r.Activity = domain.ActivitySubstate{State: domain.ActivityWaitingInput, LastActivityAt: r.CreatedAt, Source: domain.SourceHook}
+	r.IsTerminated = true
 	if err := s.UpdateSession(ctx, r); err != nil {
 		t.Fatal(err)
 	}
 	got, _, _ := s.GetSession(ctx, r.ID)
-	if got.Lifecycle.Session.State != domain.SessionDetecting || got.Lifecycle.IsAlive {
-		t.Fatalf("update not persisted: %+v", got.Lifecycle.Session)
+	if got.Activity.State != domain.ActivityWaitingInput || !got.IsTerminated {
+		t.Fatalf("update not persisted: %+v", got)
 	}
-	if got.Lifecycle.Detecting == nil || got.Lifecycle.Detecting.Attempts != 2 || got.Lifecycle.Detecting.EvidenceHash != "abc" {
-		t.Fatalf("detecting not round-tripped: %+v", got.Lifecycle.Detecting)
-	}
-	// clearing detecting persists as nil.
-	got.Lifecycle.Detecting = nil
-	got.Lifecycle.Session = domain.SessionSubstate{State: domain.SessionWorking}
+
+	got.IsTerminated = false
+	got.Activity.State = domain.ActivityActive
 	_ = s.UpdateSession(ctx, got)
 	again, _, _ := s.GetSession(ctx, r.ID)
-	if again.Lifecycle.Detecting != nil {
-		t.Fatalf("detecting should clear to nil, got %+v", again.Lifecycle.Detecting)
+	if again.IsTerminated || again.Activity.State != domain.ActivityActive {
+		t.Fatalf("activity/termination should update, got %+v", again)
 	}
 }
 
@@ -226,7 +215,7 @@ func TestCDCTriggersPopulateChangeLog(t *testing.T) {
 
 	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
 	// a real state change logs; a metadata-only change does not (WHEN guard).
-	r.Lifecycle.Session = domain.SessionSubstate{State: domain.SessionIdle}
+	r.Activity.State = domain.ActivityIdle
 	_ = s.UpdateSession(ctx, r)
 	r.Metadata.Prompt = "only metadata changed"
 	_ = s.UpdateSession(ctx, r)
@@ -285,32 +274,5 @@ func TestConcurrentSessionCreateAssignsUniqueNums(t *testing.T) {
 	}
 	if all, _ := s.ListAllSessions(ctx); len(all) != n {
 		t.Fatalf("created %d sessions, want %d", len(all), n)
-	}
-}
-
-func TestTerminationReasonRoundTripAndCheck(t *testing.T) {
-	s := newTestStore(t)
-	ctx := context.Background()
-	seedProject(t, s, "mer")
-	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
-
-	// terminate with a valid reason -> round-trips.
-	r.Lifecycle.Session = domain.SessionSubstate{State: domain.SessionTerminated}
-	r.Lifecycle.TerminationReason = domain.TermManuallyKilled
-	if err := s.UpdateSession(ctx, r); err != nil {
-		t.Fatal(err)
-	}
-	got, _, _ := s.GetSession(ctx, r.ID)
-	if got.Lifecycle.TerminationReason != domain.TermManuallyKilled {
-		t.Fatalf("termination_reason = %q, want manually_killed", got.Lifecycle.TerminationReason)
-	}
-	if domain.DeriveStatus(got.Lifecycle, domain.PRFacts{}) != domain.StatusKilled {
-		t.Fatal("terminated+manually_killed should derive to killed")
-	}
-
-	// an off-enum reason is rejected by the CHECK constraint.
-	r.Lifecycle.TerminationReason = domain.TerminationReason("definitely_not_a_reason")
-	if err := s.UpdateSession(ctx, r); err == nil {
-		t.Fatal("expected CHECK constraint to reject an invalid termination_reason")
 	}
 }

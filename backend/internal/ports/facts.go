@@ -11,7 +11,7 @@ import (
 
 // ProbeResult is a single liveness reading. "failed" (the probe errored/timed
 // out) and "unknown" (ran but couldn't tell) are kept distinct from dead — both
-// route to the detecting quarantine, never to a death conclusion.
+// report failed/unknown, never a death conclusion.
 type ProbeResult string
 
 // Probe readings. Alive/Dead are conclusions; Failed/Unknown route to the

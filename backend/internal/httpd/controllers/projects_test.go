@@ -136,7 +136,7 @@ func TestProjectsAPI_UpdateDeleteRepair(t *testing.T) {
 		t.Fatalf("seed create = %d, want 201; body=%s", status, body)
 	}
 
-	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/projects/proj", `{"agent":"claude","runtime":"tmux"}`)
+	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/projects/proj", `{"agent":"claude","runtime":"zellij"}`)
 	assertErrorCode(t, body, status, http.StatusNotImplemented, "PROJECT_CONFIG_NOT_IMPLEMENTED")
 
 	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/projects/proj", `{"path":"elsewhere"}`)

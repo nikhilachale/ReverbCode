@@ -3,11 +3,9 @@
 // duration-based escalation heartbeat, and per-session runtime liveness probes.
 //
 // The reaper sits OUTSIDE the LCM's per-session serial loop. It only REPORTS
-// facts — it never decides whether a session is "truly" dead. The decider
-// (anti-flap Detecting quarantine, terminal-session rules) is owned by the LCM
-// and consumes these facts through the regular ApplyRuntimeObservation entry
-// point. A probe error is reported as a probe-failure fact, never collapsed to
-// "alive" or "dead", so the LCM's failed-probe ≠ dead invariant holds.
+// facts — it never writes session rows directly. The LCM consumes these facts
+// through ApplyRuntimeObservation. A probe error is reported as a probe-failure
+// fact, never collapsed to "alive" or "dead".
 package reaper
 
 import (
@@ -23,28 +21,9 @@ import (
 // the design doc's 5s sampling window for runtime liveness.
 const DefaultTickInterval = 5 * time.Second
 
-// RuntimeRegistry resolves a runtime adapter by the RuntimeName recorded in a
-// session's RuntimeHandle. The reaper looks the runtime up per-session so a
-// single reaper instance can probe tmux- and zellij-backed sessions side by
-// side without knowing about either at construction.
-type RuntimeRegistry interface {
-	Runtime(name string) (ports.Runtime, bool)
-}
-
-// MapRegistry is the trivial RuntimeRegistry: a name->runtime map. Callers
-// that need dynamic registration can implement RuntimeRegistry themselves.
-type MapRegistry map[string]ports.Runtime
-
-// Runtime implements RuntimeRegistry.
-func (m MapRegistry) Runtime(name string) (ports.Runtime, bool) {
-	rt, ok := m[name]
-	return rt, ok
-}
-
 // Config holds the externally-tunable knobs for a Reaper. Every field is
-// optional; zero values fall back to safe defaults so production wiring (which
-// only needs to inject the LCM and registry) and tests (which inject a clock
-// plus a fast tick) can both stay terse.
+// optional; zero values fall back to safe defaults so production wiring and
+// tests can both stay terse.
 type Config struct {
 	// Tick is the interval between ticks. <=0 means DefaultTickInterval.
 	Tick time.Duration
@@ -61,23 +40,22 @@ type Config struct {
 // Reaper is the polling timer. Construct it with New; start the background
 // goroutine with Start, or drive a single cycle synchronously with Tick.
 type Reaper struct {
-	lcm      ports.LifecycleManager
-	registry RuntimeRegistry
-	tick     time.Duration
-	clock    func() time.Time
-	logger   *slog.Logger
+	lcm     ports.LifecycleManager
+	runtime ports.Runtime
+	tick    time.Duration
+	clock   func() time.Time
+	logger  *slog.Logger
 }
 
-// New constructs a Reaper. The LCM is the sole writer destination (the reaper
-// reports facts via ApplyRuntimeObservation and TickEscalations); the registry
-// resolves the runtime adapter to use per session.
-func New(lcm ports.LifecycleManager, registry RuntimeRegistry, cfg Config) *Reaper {
+// New constructs a Reaper. The LCM is the sole writer destination; the runtime
+// is the single configured backend used for every session.
+func New(lcm ports.LifecycleManager, runtime ports.Runtime, cfg Config) *Reaper {
 	r := &Reaper{
-		lcm:      lcm,
-		registry: registry,
-		tick:     cfg.Tick,
-		clock:    cfg.Clock,
-		logger:   cfg.Logger,
+		lcm:     lcm,
+		runtime: runtime,
+		tick:    cfg.Tick,
+		clock:   cfg.Clock,
+		logger:  cfg.Logger,
 	}
 	if r.tick <= 0 {
 		r.tick = DefaultTickInterval
@@ -134,8 +112,8 @@ func (r *Reaper) Tick(ctx context.Context) error {
 
 	// Heartbeat is best-effort and runs before enumeration so duration-based
 	// escalations still fire if the running-set lookup is the thing that
-	// errored. The LCM's TickEscalations is itself idempotent (no canonical
-	// writes) — at worst we miss escalating once and pick it up next tick.
+	// errored. The LCM's TickEscalations is itself idempotent — at worst we miss
+	// escalating once and pick it up next tick.
 	if err := r.lcm.TickEscalations(ctx, now); err != nil {
 		r.logger.Error("reaper: TickEscalations failed", "err", err)
 	}
@@ -153,11 +131,8 @@ func (r *Reaper) Tick(ctx context.Context) error {
 
 // probeOne handles a single session's probe + fact-report. Every probe result —
 // alive, dead, or failed — is reported as a fact to the LCM. The reaper does
-// not optimize away the "alive" case, because a session in Detecting (whose
-// runtime axis is NOT alive) is included in the running set and needs the
-// alive probe to recover; the reaper has no business deciding what counts as
-// a no-op. The LCM's ApplyRuntimeObservation diffs against canonical and
-// only Upserts on actual change, so steady-state alive is already cheap.
+// not optimize away the "alive" case; the reaper has no business deciding what
+// counts as a no-op. The LCM diffs and only writes on actual change.
 func (r *Reaper) probeOne(ctx context.Context, sess domain.SessionRecord, now time.Time) {
 	handle, ok := handleFromRecord(sess)
 	if !ok {
@@ -168,25 +143,18 @@ func (r *Reaper) probeOne(ctx context.Context, sess domain.SessionRecord, now ti
 			"session", sess.ID)
 		return
 	}
-	rt, ok := r.registry.Runtime(handle.RuntimeName)
-	if !ok {
-		r.logger.Warn("reaper: no runtime registered for session, skipping",
-			"session", sess.ID, "runtime", handle.RuntimeName)
-		return
-	}
-
-	alive, probeErr := rt.IsAlive(ctx, handle)
+	alive, probeErr := r.runtime.IsAlive(ctx, handle)
 	facts := ports.RuntimeFacts{ObservedAt: now}
 	switch {
 	case probeErr != nil:
 		// Failed probe must NOT be collapsed to alive — that would let a
-		// transient tmux/zellij outage hide a really-dead session, and a
+		// transient Zellij outage hide a really-dead session, and a
 		// transient adapter bug terminate a really-alive one. Report failed
-		// and let the LCM's detecting quarantine arbitrate.
+		// and let the LCM arbitrate.
 		facts.Runtime = ports.ProbeFailed
 		facts.Process = ports.ProbeFailed
 		r.logger.Debug("reaper: probe error reported as failed fact",
-			"session", sess.ID, "runtime", handle.RuntimeName, "err", probeErr)
+			"session", sess.ID, "err", probeErr)
 	case alive:
 		facts.Runtime = ports.ProbeAlive
 		facts.Process = ports.ProbeAlive
@@ -202,13 +170,11 @@ func (r *Reaper) probeOne(ctx context.Context, sess domain.SessionRecord, now ti
 }
 
 // handleFromRecord reconstructs the RuntimeHandle stored on the session by
-// OnSpawnCompleted. Both fields are required; either being empty is the
-// "session lacks a probable handle" signal that probeOne uses to skip.
+// OnSpawnCompleted. An empty handle id means the session cannot be probed.
 func handleFromRecord(rec domain.SessionRecord) (ports.RuntimeHandle, bool) {
 	id := rec.Metadata.RuntimeHandleID
-	name := rec.Metadata.RuntimeName
-	if id == "" || name == "" {
+	if id == "" {
 		return ports.RuntimeHandle{}, false
 	}
-	return ports.RuntimeHandle{ID: id, RuntimeName: name}, true
+	return ports.RuntimeHandle{ID: id}, true
 }

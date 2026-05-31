@@ -9,16 +9,16 @@ import (
 
 // LifecycleManager is the inbound contract the engine implements. Observers
 // (reaper, SCM poller, activity hooks) and the Session Manager call in; the LCM
-// is the sole writer of canonical transitions and the only place reactions fire.
+// is the central writer for observer-driven session facts and reactions.
 type LifecycleManager interface {
 	ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f RuntimeFacts) error
 	ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ActivitySignal) error
 	ApplyPRObservation(ctx context.Context, id domain.SessionID, o PRObservation) error
 
 	// OnSpawnCompleted marks a session live and records its handles. It works for
-	// a fresh spawn (not_started -> live) and a restore (terminal -> reopened).
+	// a fresh spawn and a restore.
 	OnSpawnCompleted(ctx context.Context, id domain.SessionID, o SpawnOutcome) error
-	OnKillRequested(ctx context.Context, id domain.SessionID, reason domain.TerminationReason) error
+	OnKillRequested(ctx context.Context, id domain.SessionID) error
 
 	// TickEscalations fires the duration-based escalations the synchronous LCM
 	// can't wake itself for; the reaper calls it on a timer.
@@ -28,11 +28,11 @@ type LifecycleManager interface {
 }
 
 // SessionManager is the inbound contract the API/CLI call for explicit
-// mutations. It drives the runtime/agent/workspace plugins and routes canonical
-// writes to the LCM.
+// mutations. It drives the runtime/agent/workspace plugins and routes durable
+// session-fact writes to the LCM.
 type SessionManager interface {
 	Spawn(ctx context.Context, cfg SpawnConfig) (domain.Session, error)
-	Kill(ctx context.Context, id domain.SessionID, reason domain.TerminationReason) (freed bool, err error)
+	Kill(ctx context.Context, id domain.SessionID) (freed bool, err error)
 	Restore(ctx context.Context, id domain.SessionID) (domain.Session, error)
 	List(ctx context.Context, project domain.ProjectID) ([]domain.Session, error)
 	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)

@@ -30,7 +30,6 @@ const (
 	rxApprovedGreen  reactionKey = "approved-and-green"
 	rxStuck          reactionKey = "agent-stuck"
 	rxNeedsInput     reactionKey = "agent-needs-input"
-	rxExited         reactionKey = "agent-exited"
 	rxPRClosed       reactionKey = "pr-closed"
 	rxMerged         reactionKey = "pr-merged"
 )
@@ -60,7 +59,6 @@ var reactions = map[reactionKey]reactionConfig{
 	rxApprovedGreen:  {eventType: "reaction.approved-and-green", priority: ports.PriorityAction, message: "PR is approved and green — ready to merge."},
 	rxStuck:          {eventType: "reaction.agent-stuck", priority: ports.PriorityUrgent, message: "Agent is stuck and needs attention."},
 	rxNeedsInput:     {eventType: "reaction.agent-needs-input", priority: ports.PriorityUrgent, message: "Agent needs input to continue."},
-	rxExited:         {eventType: "reaction.agent-exited", priority: ports.PriorityUrgent, message: "Agent process exited unexpectedly."},
 	rxPRClosed:       {eventType: "reaction.pr-closed", priority: ports.PriorityAction, message: "PR was closed without merging."},
 	rxMerged:         {eventType: "reaction.pr-merged", priority: ports.PriorityInfo, message: "PR merged — work complete."},
 }
@@ -155,13 +153,11 @@ func (m *Manager) runReactions(ctx context.Context, id domain.SessionID, content
 	if err != nil || !ok {
 		return err
 	}
-	lc := rec.Lifecycle
 	project := rec.ProjectID
 
-	if isTerminal(lc.Session.State) {
-		err := m.dispatch(ctx, id, project, terminalReaction(lc.TerminationReason))
-		m.clearReactions(id) // incident over: drop budgets after the final notify
-		return err
+	if rec.IsTerminated {
+		m.clearReactions(id)
+		return nil
 	}
 
 	pr, err := m.store.PRFactsForSession(ctx, id)
@@ -171,7 +167,7 @@ func (m *Manager) runReactions(ctx context.Context, id domain.SessionID, content
 
 	// Feedback reactions inject live content and re-fire as it changes — only
 	// while the agent can actually act on it.
-	if pr.Exists && !pr.Closed && !needsHuman(lc.Session.State) {
+	if pr.Exists && !pr.Closed && !needsHuman(rec.Activity.State) {
 		if pr.CI == domain.CIFailing && content.ciCheck != "" {
 			if err := m.handleCIFailure(ctx, id, project, content); err != nil {
 				return err
@@ -184,7 +180,7 @@ func (m *Manager) runReactions(ctx context.Context, id domain.SessionID, content
 		}
 	}
 
-	return m.dispatch(ctx, id, project, reactionFor(lc, pr))
+	return m.dispatch(ctx, id, project, reactionFor(rec, pr))
 }
 
 // dispatch fires the entry reaction for key, deduped so a steady state does not
@@ -213,11 +209,11 @@ func (m *Manager) dispatch(ctx context.Context, id domain.SessionID, project dom
 
 // reactionFor maps (session state, PR facts) to the reaction to enter. CI failure
 // and review feedback return "" here — they are handled by the feedback path.
-func reactionFor(lc domain.CanonicalSessionLifecycle, pr domain.PRFacts) reactionKey {
-	switch lc.Session.State {
-	case domain.SessionStuck:
+func reactionFor(rec domain.SessionRecord, pr domain.PRFacts) reactionKey {
+	switch rec.Activity.State {
+	case domain.ActivityBlocked:
 		return rxStuck
-	case domain.SessionNeedsInput:
+	case domain.ActivityWaitingInput:
 		return rxNeedsInput
 	}
 	if pr.Exists {
@@ -236,7 +232,7 @@ func reactionFor(lc domain.CanonicalSessionLifecycle, pr domain.PRFacts) reactio
 			return rxApprovedGreen
 		}
 	}
-	if lc.Session.State == domain.SessionIdle {
+	if rec.Activity.State == domain.ActivityIdle || rec.Activity.State == domain.ActivityReady || rec.Activity.State == "" {
 		return rxIdle
 	}
 	return ""
@@ -246,20 +242,8 @@ func hasReviewFeedback(pr domain.PRFacts) bool {
 	return pr.Review == domain.ReviewChangesRequest || pr.ReviewComments
 }
 
-func needsHuman(s domain.SessionState) bool {
-	return s == domain.SessionStuck || s == domain.SessionNeedsInput
-}
-
-// terminalReaction is the notify fired when a session reaches a terminal state by
-// inferred death. An explicit kill goes through OnKillRequested (no reaction);
-// auto_cleanup / pr_merged are notified elsewhere.
-func terminalReaction(r domain.TerminationReason) reactionKey {
-	switch r {
-	case domain.TermRuntimeLost, domain.TermAgentProcessExited, domain.TermProbeFailure, domain.TermErrorInProcess:
-		return rxExited
-	default:
-		return ""
-	}
+func needsHuman(s domain.ActivityState) bool {
+	return s == domain.ActivityBlocked || s == domain.ActivityWaitingInput
 }
 
 // ---- feedback reactions (content-driven re-fire + brake) ----

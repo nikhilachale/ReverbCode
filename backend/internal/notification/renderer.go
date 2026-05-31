@@ -183,8 +183,6 @@ func SemanticTypeForReaction(key string) string {
 		return "session.stuck"
 	case "agent-needs-input":
 		return "session.needs_input"
-	case "agent-exited":
-		return "session.exited"
 	case "pr-closed":
 		return "pr.closed"
 	case "pr-merged":

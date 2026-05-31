@@ -24,7 +24,7 @@ func (f *fakeSource) AttachCommand(ports.RuntimeHandle) ([]string, error) {
 		return nil, f.attachErr
 	}
 	if f.argv == nil {
-		return []string{"tmux", "attach"}, nil
+		return []string{"zellij", "attach"}, nil
 	}
 	return f.argv, nil
 }

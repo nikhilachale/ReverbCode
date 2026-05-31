@@ -9,7 +9,7 @@ import (
 )
 
 func TestDedupeSameReactionConditionProducesSameKey(t *testing.T) {
-	rec := dedupeRecord("working", time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
+	rec := dedupeRecord(domain.ActivityActive, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
 	e := ports.Event{SessionID: "ao-1", Reaction: &ports.ReactionEvent{Key: "agent-needs-input", Action: "notify"}}
 
 	k1 := ComputeDedupeKey(e, rec, domain.PRFacts{})
@@ -21,8 +21,8 @@ func TestDedupeSameReactionConditionProducesSameKey(t *testing.T) {
 
 func TestDedupeChangedConditionProducesNewKey(t *testing.T) {
 	e := ports.Event{SessionID: "ao-1", Reaction: &ports.ReactionEvent{Key: "agent-needs-input", Action: "notify"}}
-	r1 := dedupeRecord("needs_input", time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
-	r2 := dedupeRecord("needs_input", time.Date(2026, 1, 2, 3, 4, 6, 0, time.UTC))
+	r1 := dedupeRecord(domain.ActivityWaitingInput, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
+	r2 := dedupeRecord(domain.ActivityWaitingInput, time.Date(2026, 1, 2, 3, 4, 6, 0, time.UTC))
 
 	if ComputeDedupeKey(e, r1, domain.PRFacts{}) == ComputeDedupeKey(e, r2, domain.PRFacts{}) {
 		t.Fatal("changed session updated timestamp should change dedupe key")
@@ -30,7 +30,7 @@ func TestDedupeChangedConditionProducesNewKey(t *testing.T) {
 }
 
 func TestDedupeEscalationIncludesCauseAndDoesNotCollideWithBase(t *testing.T) {
-	rec := dedupeRecord("working", time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
+	rec := dedupeRecord(domain.ActivityActive, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
 	base := ports.Event{SessionID: "ao-1", Reaction: &ports.ReactionEvent{Key: "ci-failed", Action: "notify"}}
 	esc := ports.Event{
 		SessionID:  "ao-1",
@@ -51,13 +51,11 @@ func TestDedupeEscalationIncludesCauseAndDoesNotCollideWithBase(t *testing.T) {
 	}
 }
 
-func dedupeRecord(state domain.SessionState, updated time.Time) domain.SessionRecord {
+func dedupeRecord(state domain.ActivityState, updated time.Time) domain.SessionRecord {
 	return domain.SessionRecord{
 		ID:        "ao-1",
 		ProjectID: "ao",
-		Lifecycle: domain.CanonicalSessionLifecycle{
-			Session: domain.SessionSubstate{State: state},
-		},
+		Activity:  domain.ActivitySubstate{State: state, LastActivityAt: updated, Source: domain.SourceNative},
 		UpdatedAt: updated,
 	}
 }

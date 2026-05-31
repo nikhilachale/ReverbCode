@@ -7,6 +7,8 @@ package gen
 import (
 	"database/sql"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 type ChangeLog struct {
@@ -80,27 +82,21 @@ type Project struct {
 }
 
 type Session struct {
-	ID                    string
-	ProjectID             string
-	Num                   int64
-	IssueID               string
-	Kind                  string
-	Harness               string
-	SessionState          string
-	TerminationReason     string
-	IsAlive               int64
-	ActivityState         string
-	ActivityLastAt        time.Time
-	ActivitySource        string
-	DetectingAttempts     sql.NullInt64
-	DetectingStartedAt    sql.NullTime
-	DetectingEvidenceHash sql.NullString
-	Branch                string
-	WorkspacePath         string
-	RuntimeHandleID       string
-	RuntimeName           string
-	AgentSessionID        string
-	Prompt                string
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
+	ID              string
+	ProjectID       string
+	Num             int64
+	IssueID         string
+	Kind            domain.SessionKind
+	Harness         domain.AgentHarness
+	ActivityState   domain.ActivityState
+	ActivityLastAt  time.Time
+	ActivitySource  domain.ActivitySource
+	Branch          string
+	WorkspacePath   string
+	RuntimeHandleID string
+	AgentSessionID  string
+	Prompt          string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	IsTerminated    bool
 }

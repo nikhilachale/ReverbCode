@@ -105,7 +105,7 @@ func (m *Manager) Close() {
 }
 
 // openSession returns the live session for id, starting it on first open. The id
-// is the runtime handle id (tmux target).
+// is the runtime handle id (Zellij handle).
 func (m *Manager) openSession(id string) (*session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

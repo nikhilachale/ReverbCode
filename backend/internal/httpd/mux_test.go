@@ -17,9 +17,9 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
 
-// stubSource attaches a throwaway shell command instead of a real tmux pane, so
+// stubSource attaches a throwaway shell command instead of a real Zellij pane, so
 // the /mux path exercises the genuine upgrade + wsjson + Serve + creack/pty flow
-// without needing tmux. IsAlive=false means the pane is treated as gone once the
+// without needing Zellij. IsAlive=false means the pane is treated as gone once the
 // command exits (no re-attach).
 type stubSource struct{ argv []string }
 

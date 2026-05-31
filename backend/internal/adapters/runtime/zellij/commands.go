@@ -10,7 +10,6 @@ import (
 )
 
 const (
-	runtimeName       = "zellij"
 	agentPaneName     = "agent"
 	defaultChunkBytes = 16 * 1024
 )

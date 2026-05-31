@@ -1,7 +1,6 @@
-// Package session implements ports.SessionManager: the explicit-mutation half of
-// the lane. It drives the runtime/agent/workspace plugins to create and tear
-// down sessions, routes canonical writes to the LCM, and is the single producer
-// of the derived display status (attached on read in List/Get).
+// Package session implements ports.SessionManager. It drives the runtime/agent/
+// workspace plugins to create and tear down sessions, routes durable fact writes
+// through the LCM, and attaches derived display status on read.
 package session
 
 import (
@@ -112,13 +111,13 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 // markErrored best-effort parks an orphaned spawn in a terminal errored state
 // (the store has no delete; a phantom "spawning" row is worse than a terminal one).
 func (m *Manager) markErrored(ctx context.Context, id domain.SessionID) {
-	_ = m.lcm.OnKillRequested(ctx, id, domain.TermErrorInProcess)
+	_ = m.lcm.OnKillRequested(ctx, id)
 }
 
 // Kill records terminal intent with the LCM, then tears down the runtime and
 // workspace. A workspace teardown refused by the worktree-remove safety
 // (uncommitted work) surfaces as an error with freed=false and is never forced.
-func (m *Manager) Kill(ctx context.Context, id domain.SessionID, reason domain.TerminationReason) (bool, error) {
+func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
 		return false, fmt.Errorf("kill %s: %w", id, err)
@@ -131,7 +130,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID, reason domain.T
 	if handle.ID == "" || ws.Path == "" {
 		return false, fmt.Errorf("kill %s: %w", id, ErrIncompleteHandle)
 	}
-	if err := m.lcm.OnKillRequested(ctx, id, reason); err != nil {
+	if err := m.lcm.OnKillRequested(ctx, id); err != nil {
 		return false, fmt.Errorf("kill %s: %w", id, err)
 	}
 	if err := m.runtime.Destroy(ctx, handle); err != nil {
@@ -144,7 +143,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID, reason domain.T
 }
 
 // Restore relaunches a torn-down session in its workspace. The fallible I/O runs
-// before any canonical write, so a failure never resurrects the row or destroys
+// before any durable session write, so a failure never resurrects the row or destroys
 // the worktree (it may hold the agent's prior work).
 func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Session, error) {
 	rec, ok, err := m.store.GetSession(ctx, id)
@@ -154,7 +153,7 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if !ok {
 		return domain.Session{}, fmt.Errorf("restore %s: %w", id, ErrNotFound)
 	}
-	if !isTerminal(rec.Lifecycle.Session.State) {
+	if !rec.IsTerminated {
 		return domain.Session{}, fmt.Errorf("restore %s: %w", id, ErrNotRestorable)
 	}
 	meta := rec.Metadata
@@ -234,7 +233,7 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) ([]doma
 	}
 	var cleaned []domain.SessionID
 	for _, rec := range recs {
-		if !isTerminal(rec.Lifecycle.Session.State) {
+		if !rec.IsTerminated {
 			continue
 		}
 		ws := workspaceInfo(rec)
@@ -259,11 +258,7 @@ func (m *Manager) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
 	}
-	return domain.Session{SessionRecord: rec, Status: domain.DeriveStatus(rec.Lifecycle, pr)}, nil
-}
-
-func isTerminal(s domain.SessionState) bool {
-	return s == domain.SessionDone || s == domain.SessionTerminated
+	return domain.Session{SessionRecord: rec, Status: domain.DeriveStatus(rec, pr)}, nil
 }
 
 func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
@@ -273,11 +268,8 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 		Kind:      cfg.Kind,
 		CreatedAt: now,
 		UpdatedAt: now,
-		Lifecycle: domain.CanonicalSessionLifecycle{
-			Version: domain.LifecycleVersion,
-			Session: domain.SessionSubstate{State: domain.SessionNotStarted},
-			Harness: cfg.Harness,
-		},
+		Harness:   cfg.Harness,
+		Activity:  domain.ActivitySubstate{State: domain.ActivityIdle, LastActivityAt: now, Source: domain.SourceNone},
 	}
 }
 
@@ -306,7 +298,7 @@ func spawnEnv(base map[string]string, id domain.SessionID, project domain.Projec
 }
 
 func runtimeHandle(meta domain.SessionMetadata) ports.RuntimeHandle {
-	return ports.RuntimeHandle{ID: meta.RuntimeHandleID, RuntimeName: meta.RuntimeName}
+	return ports.RuntimeHandle{ID: meta.RuntimeHandleID}
 }
 
 func workspaceInfo(rec domain.SessionRecord) ports.WorkspaceInfo {

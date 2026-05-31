@@ -55,10 +55,7 @@ func seedSession(t *testing.T, s *sqlite.Store) domain.SessionRecord {
 	}
 	r, err := s.CreateSession(ctx, domain.SessionRecord{
 		ProjectID: "mer", Kind: domain.KindWorker,
-		Lifecycle: domain.CanonicalSessionLifecycle{
-			Session:  domain.SessionSubstate{State: domain.SessionWorking},
-			Activity: domain.ActivitySubstate{State: domain.ActivityActive, LastActivityAt: now, Source: domain.SourceNative},
-		},
+		Activity:  domain.ActivitySubstate{State: domain.ActivityActive, LastActivityAt: now, Source: domain.SourceNative},
 		CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
@@ -74,7 +71,7 @@ func TestE2E_StoreWriteToBroadcast(t *testing.T) {
 	s := newStore(t)
 	r := seedSession(t, s) // -> session_created (seq 1)
 
-	r.Lifecycle.Session.State = domain.SessionIdle
+	r.Activity.State = domain.ActivityIdle
 	if err := s.UpdateSession(ctx, r); err != nil { // -> session_updated (seq 2)
 		t.Fatal(err)
 	}
@@ -109,7 +106,7 @@ func TestE2E_StoreWriteToBroadcast(t *testing.T) {
 	if err := json.Unmarshal(got[0].Payload, &payload); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
-	if payload["id"] != string(r.ID) || payload["state"] != "working" {
+	if payload["id"] != string(r.ID) || payload["activity"] != "active" {
 		t.Fatalf("payload = %v", payload)
 	}
 
@@ -140,12 +137,16 @@ func TestE2E_ConcurrentPollerLiveDelivery(t *testing.T) {
 
 	const n = 6
 	for i := 0; i < n; i++ {
-		r.Lifecycle.IsAlive = i%2 == 0 // toggles is_alive -> sessions_cdc_update fires
+		if i%2 == 0 {
+			r.Activity.State = domain.ActivityActive
+		} else {
+			r.Activity.State = domain.ActivityIdle
+		}
 		if err := s.UpdateSession(ctx, r); err != nil {
 			t.Fatal(err)
 		}
 	}
-	want := 1 + n // session_created + n updates
+	want := n // session_created + n-1 activity updates; first write is unchanged
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {

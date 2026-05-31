@@ -11,3 +11,20 @@ sql:
         emit_prepared_queries: false
         emit_interface: true
         emit_empty_slices: true
+        overrides:
+          - column: "sessions.kind"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "SessionKind"
+          - column: "sessions.harness"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "AgentHarness"
+          - column: "sessions.activity_state"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "ActivityState"
+          - column: "sessions.activity_source"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "ActivitySource"

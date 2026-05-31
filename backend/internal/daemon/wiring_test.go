@@ -20,6 +20,14 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
+type fakeRuntime struct{}
+
+func (fakeRuntime) Create(context.Context, ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+	return ports.RuntimeHandle{ID: "h1"}, nil
+}
+func (fakeRuntime) Destroy(context.Context, ports.RuntimeHandle) error         { return nil }
+func (fakeRuntime) IsAlive(context.Context, ports.RuntimeHandle) (bool, error) { return true, nil }
+
 // TestWiring_WriteFlowsToBroadcaster exercises the real boot path end to end:
 // a lifecycle write -> sqlite -> DB trigger -> change_log -> CDC poller ->
 // broadcaster, through the production wiring.Adapter and cdcSource.
@@ -51,13 +59,13 @@ func TestWiring_WriteFlowsToBroadcaster(t *testing.T) {
 	}
 	rec, err := store.CreateSession(ctx, domain.SessionRecord{
 		ProjectID: "mer", Kind: domain.KindWorker,
-		Lifecycle: domain.CanonicalSessionLifecycle{Version: domain.LifecycleVersion, Session: domain.SessionSubstate{State: domain.SessionNotStarted}},
+		Activity: domain.ActivitySubstate{State: domain.ActivityIdle, LastActivityAt: time.Now(), Source: domain.SourceNone},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// A real transition through the engine, which writes the row and fires the
-	// is_alive/activity_state CDC trigger.
+	// activity_state/is_terminated CDC trigger.
 	if err := lcm.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Timestamp: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +89,7 @@ func TestWiring_WriteFlowsToBroadcaster(t *testing.T) {
 
 // TestWiring_SessionManagerSharesLifecycleStoreAndLCM verifies that startSession
 // constructs an SM whose Store and Lifecycle dependencies are the exact same
-// values the LCM holds: a single canonical-store + LCM pair, not two parallel
+// values the LCM holds: a single store + LCM pair, not two parallel
 // stacks that would diverge under concurrent writes. The brief constraint
 // forbids modifying session/manager.go to add accessors, so the assertion
 // reaches into the unexported fields via reflect + unsafe — scoped to the test
@@ -99,7 +107,8 @@ func TestWiring_SessionManagerSharesLifecycleStoreAndLCM(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := config.Config{DataDir: t.TempDir()}
 
-	lcStack := startLifecycle(ctx, store, log)
+	runtime := fakeRuntime{}
+	lcStack := startLifecycle(ctx, store, runtime, log)
 	// lcStack.Stop blocks on the reaper goroutine, which only exits once its
 	// ctx is cancelled. Production main.go calls stop() before lcStack.Stop()
 	// for the same reason — same ordering here.
@@ -108,7 +117,7 @@ func TestWiring_SessionManagerSharesLifecycleStoreAndLCM(t *testing.T) {
 		lcStack.Stop()
 	})
 
-	sStack, err := startSession(ctx, cfg, lcStack, log)
+	sStack, err := startSession(ctx, cfg, runtime, lcStack, log)
 	if err != nil {
 		t.Fatal(err)
 	}

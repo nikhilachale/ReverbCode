@@ -130,10 +130,10 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	}
 	paneID, err := r.findAgentPane(ctx, id)
 	if err != nil {
-		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id, RuntimeName: runtimeName})
+		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
 		return ports.RuntimeHandle{}, err
 	}
-	return ports.RuntimeHandle{ID: handleIDValue(id, paneID), RuntimeName: runtimeName}, nil
+	return ports.RuntimeHandle{ID: handleIDValue(id, paneID)}, nil
 }
 
 // Destroy kills the handle's zellij session. An already-gone session is treated
@@ -384,9 +384,6 @@ func validatePaneID(id string) error {
 }
 
 func handleID(handle ports.RuntimeHandle) (string, string, error) {
-	if handle.RuntimeName != "" && handle.RuntimeName != runtimeName {
-		return "", "", fmt.Errorf("zellij runtime: wrong runtime %q", handle.RuntimeName)
-	}
 	parts := strings.Split(handle.ID, "/")
 	if len(parts) == 1 {
 		if err := validateSessionID(parts[0]); err != nil {

@@ -33,8 +33,8 @@ func ComputeDedupeKey(event ports.Event, rec domain.SessionRecord, pr domain.PRF
 	}
 	reactionKey := reactionKeyForEvent(event)
 	condition := []string{
-		"session_state", string(rec.Lifecycle.Session.State),
-		"termination", string(rec.Lifecycle.TerminationReason),
+		"activity_state", string(rec.Activity.State),
+		"is_terminated", fmt.Sprint(rec.IsTerminated),
 		"session_updated", timeKey(rec.UpdatedAt),
 	}
 	if pr.Exists {

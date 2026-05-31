@@ -27,7 +27,6 @@ func TestSemanticTypeMapping(t *testing.T) {
 		"approved-and-green": "merge.ready",
 		"agent-stuck":        "session.stuck",
 		"agent-needs-input":  "session.needs_input",
-		"agent-exited":       "session.exited",
 		"pr-closed":          "pr.closed",
 		"pr-merged":          "pr.merged",
 		"ci-failed":          "ci.failing",
@@ -126,7 +125,7 @@ func renderRecord() domain.SessionRecord {
 		ID:        "ao-7",
 		ProjectID: "ao",
 		IssueID:   "AO-12",
-		Lifecycle: domain.CanonicalSessionLifecycle{Session: domain.SessionSubstate{State: domain.SessionNeedsInput}},
+		Activity:  domain.ActivitySubstate{State: domain.ActivityWaitingInput},
 		Metadata:  domain.SessionMetadata{Branch: "feat/example"},
 		UpdatedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
 	}

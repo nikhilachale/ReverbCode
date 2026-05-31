@@ -40,7 +40,7 @@ func (l *fakeLCM) ApplyPRObservation(context.Context, domain.SessionID, ports.PR
 func (l *fakeLCM) OnSpawnCompleted(context.Context, domain.SessionID, ports.SpawnOutcome) error {
 	return nil
 }
-func (l *fakeLCM) OnKillRequested(context.Context, domain.SessionID, domain.TerminationReason) error {
+func (l *fakeLCM) OnKillRequested(context.Context, domain.SessionID) error {
 	return nil
 }
 
@@ -60,17 +60,15 @@ func (r fakeRuntime) IsAlive(context.Context, ports.RuntimeHandle) (bool, error)
 func probableSession(id domain.SessionID) domain.SessionRecord {
 	return domain.SessionRecord{
 		ID:       id,
-		Metadata: domain.SessionMetadata{RuntimeHandleID: "h1", RuntimeName: "tmux"},
-		Lifecycle: domain.CanonicalSessionLifecycle{
-			Session: domain.SessionSubstate{State: domain.SessionWorking},
-		},
+		Activity: domain.ActivitySubstate{State: domain.ActivityActive},
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "h1"},
 	}
 }
 
 func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 func newReaper(lcm *fakeLCM, rt fakeRuntime) *Reaper {
-	return New(lcm, MapRegistry{"tmux": rt}, Config{Logger: quietLogger()})
+	return New(lcm, rt, Config{Logger: quietLogger()})
 }
 
 func TestTick_ReportsAliveProbe(t *testing.T) {
@@ -85,7 +83,7 @@ func TestTick_ReportsAliveProbe(t *testing.T) {
 
 func TestTick_ReportsProbeErrorAsFailed(t *testing.T) {
 	lcm := &fakeLCM{running: []domain.SessionRecord{probableSession("mer-1")}}
-	if err := newReaper(lcm, fakeRuntime{err: errors.New("tmux gone")}).Tick(ctx); err != nil {
+	if err := newReaper(lcm, fakeRuntime{err: errors.New("Zellij gone")}).Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if lcm.observed["mer-1"].Runtime != ports.ProbeFailed {

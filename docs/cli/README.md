@@ -18,8 +18,7 @@ What works now:
   endpoint, only after verifying the daemon's identity from `running.json`.
 - `ao daemon` is the hidden internal daemon entrypoint used by `ao start`.
 - `ao doctor` (and `ao doctor --json`) checks config, data dir, the database
-  file's presence, daemon state, and local tool availability for `git`, `tmux`,
-  and `zellij`. It never opens or migrates the store — the daemon is the sole
+  file's presence, daemon state, and local tool availability for `git` and `zellij`. It never opens or migrates the store — the daemon is the sole
   writer/migrator, so doctor only reports whether the database exists yet.
 - `ao completion` generates shell completions for `bash`, `zsh`, `fish`, and
   `powershell`.
@@ -59,7 +58,7 @@ Next steps:
    durable SQLite-backed project store.
 2. Implement `ao project list/add/show/remove` against `/api/v1/projects`.
 3. Wire production Session Manager dependencies: project-backed repo resolver,
-   tmux/zellij runtime registry, first agent adapter, and AgentMessenger.
+   Zellij runtime, first agent adapter, and AgentMessenger.
 4. Add `/api/v1/sessions`, then implement `ao spawn`, `ao session ...`, and
    `ao send`.
 5. Add `/events` SSE and durable event-list reads, then implement
@@ -303,7 +302,7 @@ Implemented commands:
 - `ao status` reports stopped/stale/unhealthy/not-ready/ready states and
   supports `--json`.
 - `ao doctor` checks config, data dir, database-file presence, daemon state, and
-  local tool availability for `git`, `tmux`, and `zellij`; supports `--json`. It
+  local tool availability for `git`, `zellij`; supports `--json`. It
   does not open or migrate the store (the daemon owns that).
 - `ao completion` generates `bash`, `zsh`, `fish`, and `powershell`
   completions.
@@ -327,7 +326,7 @@ part of the CLI.
 | Durable store | `backend/internal/storage/sqlite` opens SQLite, runs goose migrations, uses WAL, stores projects/sessions/PR/check/comment rows, and reads `change_log`. | Not directly called by user CLI commands, but confirms the daemon has a durable backend once APIs expose it. |
 | CDC substrate | `backend/internal/cdc` poller and broadcaster exist; daemon starts the poller with `startCDC`. | Future `ao events tail` can build on this once an SSE/API transport exists. |
 | Lifecycle manager | `backend/internal/lifecycle` is implemented and currently wired in daemon startup. | Session/status APIs can use it; CLI must wait for HTTP routes rather than calling it directly. |
-| Reaper timer | `backend/internal/observe/reaper` exists and is wired. | Runtime liveness will be available once runtime registry wiring exists. |
+| Reaper timer | `backend/internal/observe/reaper` exists and is wired. | Runtime liveness will be available once the configured Zellij runtime is wired. |
 
 ### Implemented Internally but Not Reachable by CLI Yet
 
@@ -338,11 +337,11 @@ they are wired into the daemon and exposed through HTTP.
 |---|---|---|
 | Project API pieces | `internal/project` has manager/controller DTOs, `/api/v1/projects` routes exist, and `sqlite.Store` has project CRUD. | Durable project-store adapter/wiring in the daemon and CLI commands. The daemon currently constructs the router with nil API deps, so project routes are not product-usable from `ao` yet. |
 | Session Manager | `backend/internal/session.Manager` implements `Spawn`, `Kill`, `Restore`, `List`, `Get`, `Send`, and `Cleanup`. | Production daemon wiring with real runtime, agent, workspace, messenger, and HTTP routes. |
-| Runtime adapters | tmux and zellij adapters implement `ports.Runtime` and also have attach/send/output helpers. | Runtime registry wiring in daemon, attach/send abstractions in ports/API, and selection config. |
+| Runtime adapters | Zellij adapter implements `ports.Runtime` and also have attach/send/output helpers. | Daemon wiring, attach/send abstractions in ports/API, and runtime preflight checks. |
 | Workspace adapter | git worktree adapter implements create/destroy/restore/list with safety checks. | Repo resolver backed by registered projects and daemon wiring into Session Manager. |
 | GitHub issue tracker | `backend/internal/adapters/tracker/github` implements read-only issue `Get`, `List`, and `Preflight`. | Tracker registry/config, spawn prompt hydration, and project tracker metadata. |
 | PR facts storage | SQLite PR/check/comment writes and CDC triggers exist. | SCM/PR observer that fetches GitHub PR/CI/review facts and calls `LCM.ApplyPRObservation`. |
-| Session read model | `SessionManager.List/Get` derive display status from canonical lifecycle + PR facts. | HTTP response DTOs and API routes for CLI/frontend reads. |
+| Session read model | `SessionManager.List/Get` derive display status from `activity_state`, `is_terminated`, and PR facts. | HTTP response DTOs and API routes for CLI/frontend reads. |
 
 ### Still Missing
 
@@ -356,8 +355,8 @@ These are the main gaps before the full initial command set is real.
 | Project API daemon wiring. | `ao project list/add/show/remove`. |
 | SSE route for live CDC events plus durable catch-up reads. | `ao events tail`, frontend live updates. |
 | Agent adapters for supported harnesses (`codex`, `claude-code`, etc.). | `ao spawn`, `ao session restore`. |
-| AgentMessenger implementation over tmux/zellij. | `ao send`, LCM auto-nudge reactions. |
-| Runtime registry wired with tmux/zellij. | Reaper liveness, `session attach`, spawn/kill/restore runtime work. |
+| AgentMessenger implementation over Zellij. | `ao send`, LCM auto-nudge reactions. |
+| Zellij runtime wired into the daemon. | Reaper liveness, `session attach`, spawn/kill/restore runtime work. |
 | Notifier implementation/multiplexer. | Human notifications and LCM escalation side effects. |
 | Activity hooks or agent self-report protocol. | Accurate working/idle/needs-input status beyond runtime/PR facts. |
 | Project/tracker config model. | `project add/show`, tracker-backed `spawn`, `doctor` config checks. |
@@ -377,9 +376,9 @@ These are the main gaps before the full initial command set is real.
 | `ao project list/add/show/remove` | Not yet | Project manager/controller route shell and SQLite project CRUD exist. | Durable project-store adapter, daemon API wiring, and CLI HTTP client. CLI must not write SQLite directly. |
 | `ao spawn` | Not yet | Session Manager exists; runtime/workspace/tracker pieces partly exist. | Agent adapters, registry/config wiring, project lookup, tracker hydration, HTTP route. |
 | `ao session list/show` | Not yet | Store and Session Manager read model exist. | HTTP routes and response DTOs. |
-| `ao session attach` | Not yet | tmux/zellij have attach command helpers. | Runtime attach port/API and terminal-launch policy. |
+| `ao session attach` | Not yet | Zellij has attach command helpers. | Runtime attach port/API and terminal-launch policy. |
 | `ao session kill/restore` | Not yet | Session Manager implements both. | Production wiring and HTTP routes. |
-| `ao send` | Not yet | Session Manager has `Send`; tmux/zellij have send helpers. | AgentMessenger implementation, port/API wiring, busy/idle delivery policy. |
+| `ao send` | Not yet | Session Manager has `Send`; Zellij has send helpers. | AgentMessenger implementation, port/API wiring, busy/idle delivery policy. |
 | `ao events tail/list` | Not yet | Durable `change_log`, CDC poller, in-process broadcaster. | SSE route and durable event-list route. |
 
 ### Recommended Build Order
@@ -389,7 +388,7 @@ These are the main gaps before the full initial command set is real.
 2. Wire the existing project manager/controller shell into the daemon with a
    durable SQLite-backed store, then implement `project list/add/show/remove`.
 3. Wire production Session Manager dependencies: project-backed repo resolver,
-   tmux/zellij runtime registry, first agent adapter, and AgentMessenger.
+   Zellij runtime, first agent adapter, and AgentMessenger.
 4. Add `/api/v1/sessions` and implement `spawn`, `session list/show/kill/restore`,
    and `send`.
 5. Add `/events` SSE plus event-list reads, then implement `events tail/list`.

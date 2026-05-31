@@ -75,7 +75,7 @@ func TestSessionWriteAndResizeReachPTY(t *testing.T) {
 }
 
 func TestSessionSkipsReattachOnCleanExit(t *testing.T) {
-	src := &fakeSource{alive: false} // tmux session gone -> no re-attach
+	src := &fakeSource{alive: false} // Zellij session gone -> no re-attach
 	pty := newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
 	s := newTestSession(src, sp.spawn)

@@ -11,7 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
@@ -61,32 +61,37 @@ func Run() error {
 		return err
 	}
 
-	// Terminal streaming: the tmux runtime supplies the PTY-attach command and
+	// Terminal streaming: the Zellij runtime supplies the PTY-attach command and
 	// liveness; the CDC broadcaster feeds the session-state channel. The manager
 	// is handed to httpd, which mounts it at /mux. Raw PTY bytes never flow
 	// through the CDC change_log — only session-state events do.
-	runtimeAdapter := tmux.New(tmux.Options{})
+	runtimeAdapter := zellij.New(zellij.Options{})
 	termMgr := terminal.NewManager(runtimeAdapter, cdcPipe.Broadcaster, log)
 	defer termMgr.Close()
 
 	srv, err := httpd.New(cfg, log, termMgr)
 	if err != nil {
+		stop()
+		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
+			log.Error("cdc pipeline shutdown", "err", cdcErr)
+		}
 		return err
 	}
 
 	// Bring up the Lifecycle Manager (sole store writer) and the reaper (OBSERVE
 	// timer). This makes the write path live end-to-end: LCM write -> store -> DB
 	// trigger -> change_log -> poller -> broadcaster.
-	lcStack := startLifecycle(ctx, store, log)
 
-	// Bring up the Session Manager. Runtime (tmux) and Workspace (gitworktree)
+	lcStack := startLifecycle(ctx, store, runtimeAdapter, log)
+
+	// Bring up the Session Manager. Runtime (Zellij) and Workspace (gitworktree)
 	// are real on main; ports.Agent has no production adapter yet, so a loud
 	// stub returns a sentinel command that makes any Spawn fail at the runtime
 	// layer rather than start a broken session quietly. Notifier and
 	// AgentMessenger remain stubbed alongside the LCM until their multiplexers
 	// land. No HTTP routes wire to this yet — the daemon lane (#10) owns API
 	// surfacing — so we hold the SM in a local until it does.
-	sStack, err := startSession(ctx, cfg, lcStack, log)
+	sStack, err := startSession(ctx, cfg, runtimeAdapter, lcStack, log)
 	if err != nil {
 		// startSession is the first start* call after this point that can
 		// realistically fail while the cdc poller and the reaper are already
