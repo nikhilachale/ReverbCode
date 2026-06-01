@@ -72,6 +72,7 @@ type Session struct {
 	ActivityState   domain.ActivityState
 	ActivityLastAt  time.Time
 	ActivitySource  domain.ActivitySource
+	IsTerminated    bool
 	Branch          string
 	WorkspacePath   string
 	RuntimeHandleID string
@@ -79,5 +80,4 @@ type Session struct {
 	Prompt          string
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
-	IsTerminated    bool
 }

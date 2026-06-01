@@ -42,7 +42,7 @@ func (f *fakeSource) setAlive(v bool) {
 }
 
 // fakePTY is a scripted ptyProcess: Read drains the out channel, Write records,
-// Resize records, Close/Wait unblock on close.
+// Resize records, and Close unblocks reads.
 type fakePTY struct {
 	out    chan []byte
 	closed chan struct{}
@@ -79,11 +79,6 @@ func (p *fakePTY) Resize(rows, cols uint16) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.resizes = append(p.resizes, [2]uint16{rows, cols})
-	return nil
-}
-
-func (p *fakePTY) Wait() error {
-	<-p.closed
 	return nil
 }
 

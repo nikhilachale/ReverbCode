@@ -17,10 +17,9 @@ type ProbeResult string
 // Probe readings. Alive/Dead are conclusions; Failed/Unknown are ignored by
 // lifecycle because they are not reliable death decisions.
 const (
-	ProbeAlive   ProbeResult = "alive"
-	ProbeDead    ProbeResult = "dead"
-	ProbeFailed  ProbeResult = "failed"
-	ProbeUnknown ProbeResult = "unknown"
+	ProbeAlive  ProbeResult = "alive"
+	ProbeDead   ProbeResult = "dead"
+	ProbeFailed ProbeResult = "failed"
 )
 
 // RuntimeFacts is what the reaper reports each probe of a session runtime.

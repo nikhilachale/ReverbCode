@@ -22,11 +22,10 @@ const (
 	// knob entirely. If a non-default loopback (e.g. ::1, 127.0.0.2) is ever
 	// needed, add it back with an IsLoopback() validator — not a raw env read.
 	LoopbackHost = "127.0.0.1"
-	// DefaultPort is the single port the whole surface (REST, SSE, WS, static)
-	// is served from. Single-port keeps it same-origin: no CORS, one lifecycle.
+	// DefaultPort is the single port for REST, terminal mux, health, and control.
 	DefaultPort = 3001
-	// DefaultRequestTimeout bounds a single request. Long-lived surfaces (SSE,
-	// WS) are mounted outside this timeout; it guards the REST surface only.
+	// DefaultRequestTimeout bounds a single REST request. Long-lived terminal mux
+	// connections are mounted outside this timeout.
 	DefaultRequestTimeout = 60 * time.Second
 	// DefaultShutdownTimeout is the hard cap on graceful shutdown. After this
 	// the process exits even if connections are still draining.
@@ -47,8 +46,8 @@ type Config struct {
 	// RunFilePath is where the PID + port handshake file (running.json) is
 	// written so the Electron supervisor can discover and reap the daemon.
 	RunFilePath string
-	// DataDir is the directory holding durable state (the SQLite database and
-	// the CDC JSONL log). It is created on first use by the storage layer.
+	// DataDir is the directory holding durable state: SQLite database, WAL files,
+	// and managed worktrees. It is created on first use by the storage layer.
 	DataDir string
 }
 

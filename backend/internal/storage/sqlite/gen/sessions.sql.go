@@ -14,9 +14,8 @@ import (
 
 const getSession = `-- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
-    activity_state, activity_last_at, activity_source, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
-    is_terminated
+    activity_state, activity_last_at, activity_source, is_terminated, branch, workspace_path,
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at
 FROM sessions WHERE id = ?
 `
 
@@ -33,6 +32,7 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.ActivityState,
 		&i.ActivityLastAt,
 		&i.ActivitySource,
+		&i.IsTerminated,
 		&i.Branch,
 		&i.WorkspacePath,
 		&i.RuntimeHandleID,
@@ -40,7 +40,6 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.Prompt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.IsTerminated,
 	)
 	return i, err
 }
@@ -99,9 +98,8 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 
 const listAllSessions = `-- name: ListAllSessions :many
 SELECT id, project_id, num, issue_id, kind, harness,
-    activity_state, activity_last_at, activity_source, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
-    is_terminated
+    activity_state, activity_last_at, activity_source, is_terminated, branch, workspace_path,
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at
 FROM sessions ORDER BY project_id, num
 `
 
@@ -124,6 +122,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.ActivityState,
 			&i.ActivityLastAt,
 			&i.ActivitySource,
+			&i.IsTerminated,
 			&i.Branch,
 			&i.WorkspacePath,
 			&i.RuntimeHandleID,
@@ -131,7 +130,6 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.Prompt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.IsTerminated,
 		); err != nil {
 			return nil, err
 		}
@@ -148,9 +146,8 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 
 const listSessionsByProject = `-- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness,
-    activity_state, activity_last_at, activity_source, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
-    is_terminated
+    activity_state, activity_last_at, activity_source, is_terminated, branch, workspace_path,
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -173,6 +170,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.ActivityState,
 			&i.ActivityLastAt,
 			&i.ActivitySource,
+			&i.IsTerminated,
 			&i.Branch,
 			&i.WorkspacePath,
 			&i.RuntimeHandleID,
@@ -180,7 +178,6 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.Prompt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.IsTerminated,
 		); err != nil {
 			return nil, err
 		}

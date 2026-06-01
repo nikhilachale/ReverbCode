@@ -143,7 +143,7 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 	if err != nil {
 		return err
 	}
-	if worktreeRegistered(records, path) {
+	if _, ok := findWorktree(records, path); ok {
 		if removeErr != nil {
 			return fmt.Errorf("gitworktree: refusing to remove %q: path is still registered after git worktree prune (worktree remove: %w)", path, removeErr)
 		}
@@ -220,7 +220,7 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch string) 
 		return err
 	}
 	if localBranch {
-		if _, err := w.run(ctx, w.binary, chooseWorktreeAddArgs(repo, path, branch, "", true)...); err != nil {
+		if _, err := w.run(ctx, w.binary, worktreeAddBranchArgs(repo, path, branch)...); err != nil {
 			return fmt.Errorf("gitworktree: worktree add existing branch %q: %w", branch, err)
 		}
 		return nil
@@ -229,7 +229,7 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch string) 
 	if err != nil {
 		return err
 	}
-	if _, err := w.run(ctx, w.binary, chooseWorktreeAddArgs(repo, path, branch, baseRef, false)...); err != nil {
+	if _, err := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo, branch, path, baseRef)...); err != nil {
 		return fmt.Errorf("gitworktree: worktree add branch %q from %q: %w", branch, baseRef, err)
 	}
 	return nil
@@ -413,11 +413,6 @@ func filterProjectWorktrees(records []worktreeRecord, projectRoot string, projec
 		})
 	}
 	return out
-}
-
-func worktreeRegistered(records []worktreeRecord, path string) bool {
-	_, ok := findWorktree(records, path)
-	return ok
 }
 
 func findWorktree(records []worktreeRecord, path string) (worktreeRecord, bool) {

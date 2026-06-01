@@ -172,6 +172,20 @@ func TestBuildLayoutUsesCmdLaunchOnCmdShells(t *testing.T) {
 	}
 }
 
+func TestCreateRejectsInvalidEnvKeys(t *testing.T) {
+	r := New(Options{Binary: "zellij-test", Timeout: time.Second, Shell: "/bin/zsh"})
+	r.runner = &fakeRunner{}
+	_, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		LaunchCommand: "echo ready",
+		Env:           map[string]string{"BAD KEY": "x"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid env key") {
+		t.Fatalf("Create err = %v, want invalid env key", err)
+	}
+}
+
 func TestCreateStartsSessionAndDiscoversPane(t *testing.T) {
 	fr := &fakeRunner{outputs: [][]byte{[]byte("zellij 0.44.3"), nil, []byte(`[{"id":0,"is_plugin":true,"title":"zellij:tab-bar"},{"id":3,"is_plugin":false,"title":"agent"}]`)}}
 	r := New(Options{Binary: "zellij-test", Timeout: time.Second, Shell: "/bin/zsh", SocketDir: "/tmp/zj", ConfigDir: "/tmp/cfg"})

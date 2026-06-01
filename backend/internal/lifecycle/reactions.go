@@ -22,7 +22,8 @@ func newReactionState() reactionState {
 }
 
 // ApplyPRObservation reacts to a fetched PR observation after the PR service has
-// persisted it. It does not write PR rows; it only sends actionable agent nudges.
+// persisted it. It does not write PR rows; it only sends actionable agent nudges
+// such as rebase, fix-CI, and address-review-feedback prompts.
 func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o ports.PRObservation) error {
 	if !o.Fetched || o.Closed || o.Merged {
 		return nil

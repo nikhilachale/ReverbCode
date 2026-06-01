@@ -65,10 +65,6 @@ func New(yamlBytes []byte) (*Spec, error) {
 	return &Spec{doc: doc}, nil
 }
 
-// YAML returns the raw embedded document bytes. Used by the /openapi.yaml
-// handler.
-func (s *Spec) YAML() []byte { return openapiYAML }
-
 // Operation returns the spec slice for a single (method, path) pair, ready
 // to be JSON-serialised. The slice is the OpenAPI Operation object (the
 // inner block under e.g. paths./projects.get), with parent path-level
@@ -140,10 +136,8 @@ func NotImplemented(w http.ResponseWriter, r *http.Request, method, path string)
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-// ServeYAML serves the embedded openapi.yaml document. Mounted at
-// /api/v1/openapi.yaml so spec-consuming tooling (#19's validator,
-// SDK generators, the dashboard's developer tools) can fetch the
-// whole document in one request.
+// ServeYAML serves the embedded OpenAPI document for SDK generators, tests, and
+// developer tooling.
 func ServeYAML(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
 	_, _ = w.Write(openapiYAML)

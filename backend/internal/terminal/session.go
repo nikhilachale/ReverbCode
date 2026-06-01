@@ -28,8 +28,6 @@ type PTYSource interface {
 type ptyProcess interface {
 	io.ReadWriteCloser
 	Resize(rows, cols uint16) error
-	// Wait blocks until the attach process exits.
-	Wait() error
 }
 
 // spawnFunc starts a PTY for argv. ctx cancellation must terminate the process.
@@ -44,9 +42,9 @@ const (
 	defaultReattachResetTime = 5 * time.Second
 )
 
-// subscriber receives one terminal's output frames. It must not block; the
-// session calls it while holding no lock, but a slow consumer stalls fan-out, so
-// the WS layer funnels these onto its own buffered writer.
+// subscriber receives one terminal's output frames. It must not block: session
+// fan-out calls subscribers while serializing replay/delivery under its mutex,
+// so the WS layer funnels frames onto its own buffered writer.
 type subscriber func(data []byte)
 
 // session is one attached terminal pane, fanned out to N subscribers. It owns a

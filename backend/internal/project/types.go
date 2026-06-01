@@ -10,11 +10,9 @@ import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 // transport DTOs (dto.go) together is the feature-package layout the backend
 // is migrating toward.
 
-// Summary is the row shape returned by GET /api/v1/projects. It mirrors the TS
-// ProjectInfo (packages/web/src/lib/project-name.ts) so the existing dashboard
-// list view reads the Go daemon's response unchanged. ResolveError is set only
-// for degraded projects (registry entry survives but config failed to load),
-// so the list shows them with a warning instead of dropping them silently.
+// Summary is the row shape returned by GET /api/v1/projects. ResolveError is
+// set only for degraded projects, so the list can show them with a warning
+// instead of dropping them silently.
 type Summary struct {
 	ID            domain.ProjectID `json:"id"`
 	Name          string           `json:"name"`

@@ -20,7 +20,7 @@ type sessionStore interface {
 }
 
 // Manager reduces runtime, activity, spawn, and termination observations into durable session facts.
-// It also owns agent nudges caused by PR observations.
+// It also owns agent nudges caused by PR observations, including merge-conflict, CI-failure, and review-feedback prompts.
 type Manager struct {
 	store     sessionStore
 	messenger ports.AgentMessenger

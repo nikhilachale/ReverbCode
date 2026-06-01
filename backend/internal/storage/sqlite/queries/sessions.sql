@@ -19,22 +19,19 @@ WHERE id = ?;
 
 -- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
-    activity_state, activity_last_at, activity_source, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
-    is_terminated
+    activity_state, activity_last_at, activity_source, is_terminated, branch, workspace_path,
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at
 FROM sessions WHERE id = ?;
 
 -- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness,
-    activity_state, activity_last_at, activity_source, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
-    is_terminated
+    activity_state, activity_last_at, activity_source, is_terminated, branch, workspace_path,
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at
 FROM sessions WHERE project_id = ? ORDER BY num;
 
 -- name: ListAllSessions :many
 SELECT id, project_id, num, issue_id, kind, harness,
-    activity_state, activity_last_at, activity_source, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
-    is_terminated
+    activity_state, activity_last_at, activity_source, is_terminated, branch, workspace_path,
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at
 FROM sessions ORDER BY project_id, num;
 

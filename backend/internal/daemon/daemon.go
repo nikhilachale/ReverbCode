@@ -75,30 +75,10 @@ func Run() error {
 		return err
 	}
 
-	// Bring up the Lifecycle Manager and the reaper (OBSERVE timer). This makes
-	// the session lifecycle write path live end-to-end: LCM write -> store -> DB
-	// trigger -> change_log -> poller -> broadcaster.
-
+	// Bring up the Lifecycle Manager and the reaper. This makes the session
+	// lifecycle write path live end-to-end: reducer write -> store -> DB trigger
+	// -> change_log -> poller -> broadcaster.
 	lcStack := startLifecycle(ctx, store, runtimeAdapter, log)
-
-	// Bring up the Session Manager. Runtime (Zellij) and Workspace (gitworktree)
-	// are real; ports.Agent and AgentMessenger remain loud stubs until production
-	// agent adapters land. No HTTP routes expose the Session Manager yet.
-	sStack, err := startSession(ctx, cfg, runtimeAdapter, lcStack, log)
-	if err != nil {
-		// startSession is the first start* call after this point that can
-		// realistically fail while the cdc poller and the reaper are already
-		// running. Mirror the bottom-of-run shutdown sequence so both have
-		// drained before the deferred store.Close() fires. Defers would hit
-		// the LIFO trap (see comment after srv.Run), hence explicit.
-		stop()
-		lcStack.Stop()
-		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
-			log.Error("cdc pipeline shutdown", "err", cdcErr)
-		}
-		return err
-	}
-	_ = sStack
 
 	runErr := srv.Run(ctx)
 

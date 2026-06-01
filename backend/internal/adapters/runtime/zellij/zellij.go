@@ -115,6 +115,9 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	if cfg.LaunchCommand == "" {
 		return ports.RuntimeHandle{}, errors.New("zellij runtime: launch command is required")
 	}
+	if err := validateEnvKeys(cfg.Env); err != nil {
+		return ports.RuntimeHandle{}, err
+	}
 	if err := r.ensureSupportedVersion(ctx); err != nil {
 		return ports.RuntimeHandle{}, err
 	}

@@ -25,8 +25,8 @@ func TestCommandArgs(t *testing.T) {
 	}{
 		{"check ref", checkRefFormatBranchArgs(repo, branch), []string{"-C", repo, "check-ref-format", "--branch", branch}},
 		{"rev parse", revParseVerifyArgs(repo, "origin/main"), []string{"-C", repo, "rev-parse", "--verify", "--quiet", "origin/main"}},
-		{"add existing", chooseWorktreeAddArgs(repo, path, branch, "", true), []string{"-C", repo, "worktree", "add", path, branch}},
-		{"add new", chooseWorktreeAddArgs(repo, path, branch, "origin/main", false), []string{"-C", repo, "worktree", "add", "-b", branch, path, "origin/main"}},
+		{"add existing", worktreeAddBranchArgs(repo, path, branch), []string{"-C", repo, "worktree", "add", path, branch}},
+		{"add new", worktreeAddNewBranchArgs(repo, branch, path, "origin/main"), []string{"-C", repo, "worktree", "add", "-b", branch, path, "origin/main"}},
 		// No --force: a dirty worktree must cause `git worktree remove` to fail so
 		// the post-prune safety check surfaces the refusal instead of deleting
 		// uncommitted agent work (review item RA).
@@ -48,6 +48,12 @@ func TestBaseRefCandidates(t *testing.T) {
 	want := []string{"origin/feature/test", "origin/main", "feature/test"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("candidates = %#v, want %#v", got, want)
+	}
+
+	got = baseRefCandidates("feature/test", "upstream/main")
+	want = []string{"origin/feature/test", "upstream/main", "feature/test"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("qualified candidates = %#v, want %#v", got, want)
 	}
 }
 
