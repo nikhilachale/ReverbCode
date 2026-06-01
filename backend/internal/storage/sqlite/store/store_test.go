@@ -145,8 +145,33 @@ func TestPRCRUD(t *testing.T) {
 	if err != nil || !ok || got != pr {
 		t.Fatalf("get pr: ok=%v err=%v got=%+v", ok, err, got)
 	}
-	if list, _ := s.ListPRsBySession(ctx, string(r.ID)); len(list) != 1 {
+	if list, _ := s.ListPRsBySession(ctx, r.ID); len(list) != 1 {
 		t.Fatalf("list prs = %d, want 1", len(list))
+	}
+}
+
+func TestWritePRRejectsSessionReassignment(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	first, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	second, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Now().UTC().Truncate(time.Second)
+
+	pr := domain.PRRow{URL: "https://gh/pr/1", SessionID: first.ID, Number: 1, UpdatedAt: now}
+	if err := s.WritePR(ctx, pr, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	pr.SessionID = second.ID
+	if err := s.WritePR(ctx, pr, nil, nil); err == nil {
+		t.Fatal("expected reassignment to fail")
+	}
+	got, ok, err := s.GetPR(ctx, pr.URL)
+	if err != nil || !ok {
+		t.Fatalf("get pr: ok=%v err=%v", ok, err)
+	}
+	if got.SessionID != first.ID {
+		t.Fatalf("pr moved to %s, want %s", got.SessionID, first.ID)
 	}
 }
 

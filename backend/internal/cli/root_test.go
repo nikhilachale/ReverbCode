@@ -71,9 +71,9 @@ func TestStartReturnsExistingReadyDaemon(t *testing.T) {
 	var started bool
 	out, _, err := executeCLI(t, Deps{
 		ProcessAlive: func(pid int) bool { return pid == os.Getpid() },
-		StartProcess: func(processStartConfig) (processHandle, error) {
+		StartProcess: func(processStartConfig) error {
 			started = true
-			return processHandle{}, nil
+			return nil
 		},
 		Now: func() time.Time { return time.Unix(110, 0).UTC() },
 	}, "start", "--json")
@@ -115,7 +115,7 @@ func TestStartClearsStaleRunFileBeforeSpawning(t *testing.T) {
 
 	out, _, err := executeCLI(t, Deps{
 		ProcessAlive: func(pid int) bool { return pid == 4242 || pid == os.Getpid() },
-		StartProcess: func(processStartConfig) (processHandle, error) {
+		StartProcess: func(processStartConfig) error {
 			info, err := runfile.Read(cfg.runFile)
 			if err != nil {
 				t.Fatal(err)
@@ -127,7 +127,7 @@ func TestStartClearsStaleRunFileBeforeSpawning(t *testing.T) {
 			if err := runfile.Write(cfg.runFile, runfile.Info{PID: os.Getpid(), Port: port, StartedAt: time.Unix(110, 0).UTC()}); err != nil {
 				t.Fatal(err)
 			}
-			return processHandle{PID: os.Getpid()}, nil
+			return nil
 		},
 		Now: func() time.Time { return time.Unix(120, 0).UTC() },
 	}, "start", "--json")
@@ -301,9 +301,9 @@ func TestStartDoesNotSpawnWhenLiveProbeFails(t *testing.T) {
 	var started bool
 	_, _, err := executeCLI(t, Deps{
 		ProcessAlive: func(pid int) bool { return pid == 4242 },
-		StartProcess: func(processStartConfig) (processHandle, error) {
+		StartProcess: func(processStartConfig) error {
 			started = true
-			return processHandle{}, nil
+			return nil
 		},
 	}, "start", "--timeout", "1ns", "--json")
 	if err == nil {

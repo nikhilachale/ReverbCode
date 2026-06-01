@@ -35,3 +35,23 @@ func TestDeriveStatusFromSessionFactsAndPR(t *testing.T) {
 		})
 	}
 }
+
+func TestDisplayPRPrefersActivePR(t *testing.T) {
+	prs := []PRFacts{
+		{Exists: true, URL: "closed", Closed: true, CI: CIPassing},
+		{Exists: true, URL: "open", CI: CIFailing},
+	}
+	if got := DisplayPR(prs); got.URL != "open" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestDisplayPRFallsBackToHistoricalPR(t *testing.T) {
+	prs := []PRFacts{
+		{Exists: true, URL: "closed", Closed: true},
+		{Exists: true, URL: "merged", Merged: true},
+	}
+	if got := DisplayPR(prs); got.URL != "closed" {
+		t.Fatalf("got %+v", got)
+	}
+}

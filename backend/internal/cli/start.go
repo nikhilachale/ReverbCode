@@ -91,7 +91,7 @@ func (c *commandContext) startDaemon(ctx context.Context, opts startOptions) (da
 	}
 	defer func() { _ = logFile.Close() }()
 
-	if _, err := c.deps.StartProcess(processStartConfig{
+	if err := c.deps.StartProcess(processStartConfig{
 		Path:   exe,
 		Args:   []string{"daemon"},
 		Env:    os.Environ(),

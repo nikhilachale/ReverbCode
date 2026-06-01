@@ -47,6 +47,7 @@ is intentionally not env-configurable.
 | `AO_REQUEST_TIMEOUT` | `60s` | per-request timeout (Go duration) |
 | `AO_SHUTDOWN_TIMEOUT` | `10s` | graceful-shutdown hard cap |
 | `AO_RUN_FILE` | `<UserConfigDir>/agent-orchestrator/running.json` | PID + port handshake path |
+| `AO_DATA_DIR` | `<UserConfigDir>/agent-orchestrator/data` | SQLite DB, WAL files, and managed state |
 
 ### Test
 

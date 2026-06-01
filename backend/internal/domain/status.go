@@ -54,6 +54,22 @@ func DeriveStatus(rec SessionRecord, pr PRFacts) SessionStatus {
 	return StatusIdle
 }
 
+// DisplayPR chooses the PR facts that represent a session in the dashboard.
+// Prefer the active PR when present; otherwise fall back to the first historical
+// PR so closed/merged sessions still get a sensible display status.
+func DisplayPR(prs []PRFacts) PRFacts {
+	if len(prs) == 0 {
+		return PRFacts{}
+	}
+	pick := prs[0]
+	for _, pr := range prs {
+		if !pr.Merged && !pr.Closed {
+			return pr
+		}
+	}
+	return pick
+}
+
 func prPipelineStatus(pr PRFacts) SessionStatus {
 	switch {
 	case pr.CI == CIFailing:

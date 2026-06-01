@@ -19,9 +19,8 @@ npm run lint
 - SQLite: migrations create projects, sessions, PR/check/comment, and `change_log` tables.
 - CDC: DB triggers append to `change_log`; the poller broadcasts live events.
 - Session Manager: spawn/kill/restore/list/get/send/cleanup over runtime,
-  workspace, agent, store, messenger, and lifecycle ports.
-- Agent harness: production adapter is still a loud stub in daemon wiring, so
-  spawn/restore should fail clearly until harness adapters are implemented.
+  workspace, agent, store, messenger, and lifecycle ports. It is package-level
+  code today; daemon HTTP routes for session commands are not wired yet.
 
 ## Next integration work
 

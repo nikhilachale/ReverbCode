@@ -13,8 +13,8 @@ import (
 
 // The pr / pr_checks / pr_comment rows are modelled by domain.PRRow /
 // domain.PRCheckRow / domain.PRComment — flat tables, one shared type per table.
-// This layer only maps those to/from the sqlc gen.* params: the bool PR state
-// becomes the single pr.state column, empty enums default to their
+// This layer only maps those to/from the sqlc gen.* params: the bool PR flags
+// become the single pr.pr_state column, empty enums default to their
 // "nothing known yet" value (matching the CHECK constraints), and ints widen to
 // int64.
 
@@ -34,6 +34,13 @@ func (s *Store) WritePR(ctx context.Context, pr domain.PRRow, checks []domain.PR
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.inTx(ctx, "write pr observation", func(q *gen.Queries) error {
+		existing, err := q.GetPR(ctx, pr.URL)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err == nil && existing.SessionID != pr.SessionID {
+			return fmt.Errorf("pr %s already belongs to session %s", pr.URL, existing.SessionID)
+		}
 		if err := q.UpsertPR(ctx, genPRParams(pr)); err != nil {
 			return err
 		}
@@ -67,8 +74,8 @@ func (s *Store) GetPR(ctx context.Context, url string) (domain.PRRow, bool, erro
 }
 
 // ListPRsBySession returns every PR owned by a session, newest first.
-func (s *Store) ListPRsBySession(ctx context.Context, sessionID string) ([]domain.PRRow, error) {
-	rows, err := s.qr.ListPRsBySession(ctx, domain.SessionID(sessionID))
+func (s *Store) ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PRRow, error) {
+	rows, err := s.qr.ListPRsBySession(ctx, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("list prs for %s: %w", sessionID, err)
 	}
@@ -121,24 +128,38 @@ func prState(r domain.PRRow) domain.PRState {
 	}
 }
 
-func orDefault(v, def string) string {
-	if v == "" {
-		return def
-	}
-	return v
-}
-
 func genPRParams(r domain.PRRow) gen.UpsertPRParams {
 	return gen.UpsertPRParams{
 		Url:            r.URL,
 		SessionID:      r.SessionID,
 		Number:         int64(r.Number),
 		PrState:        prState(r),
-		ReviewDecision: domain.ReviewDecision(orDefault(string(r.Review), string(domain.ReviewNone))),
-		CiState:        domain.CIState(orDefault(string(r.CI), string(domain.CIUnknown))),
-		Mergeability:   domain.Mergeability(orDefault(string(r.Mergeability), string(domain.MergeUnknown))),
+		ReviewDecision: reviewOrDefault(r.Review),
+		CiState:        ciOrDefault(r.CI),
+		Mergeability:   mergeabilityOrDefault(r.Mergeability),
 		UpdatedAt:      r.UpdatedAt,
 	}
+}
+
+func reviewOrDefault(v domain.ReviewDecision) domain.ReviewDecision {
+	if v == "" {
+		return domain.ReviewNone
+	}
+	return v
+}
+
+func ciOrDefault(v domain.CIState) domain.CIState {
+	if v == "" {
+		return domain.CIUnknown
+	}
+	return v
+}
+
+func mergeabilityOrDefault(v domain.Mergeability) domain.Mergeability {
+	if v == "" {
+		return domain.MergeUnknown
+	}
+	return v
 }
 
 func prRowFromGen(p gen.Pr) domain.PRRow {

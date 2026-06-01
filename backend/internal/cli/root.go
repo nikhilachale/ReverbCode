@@ -51,7 +51,7 @@ type Deps struct {
 
 	HTTPClient   *http.Client
 	Executable   func() (string, error)
-	StartProcess func(processStartConfig) (processHandle, error)
+	StartProcess func(processStartConfig) error
 	ProcessAlive func(pid int) bool
 	LookPath     func(file string) (string, error)
 	Now          func() time.Time

@@ -16,11 +16,9 @@ import (
 const (
 	// LoopbackHost is the only host the daemon ever binds. There is deliberately
 	// no AO_HOST env var: the daemon has no auth/CORS/TLS and a stray
-	// AO_HOST=0.0.0.0 would turn it into a public no-auth service. The legacy
-	// TS server bound all-interfaces by accident and docs/CROSS_PLATFORM.md
-	// already calls that out as a bug; the Go rewrite fixes it by removing the
-	// knob entirely. If a non-default loopback (e.g. ::1, 127.0.0.2) is ever
-	// needed, add it back with an IsLoopback() validator — not a raw env read.
+	// AO_HOST=0.0.0.0 would turn it into a public no-auth service. If a
+	// non-default loopback (e.g. ::1, 127.0.0.2) is ever needed, add it back with
+	// an IsLoopback() validator — not a raw env read.
 	LoopbackHost = "127.0.0.1"
 	// DefaultPort is the single port for REST, terminal mux, health, and control.
 	DefaultPort = 3001
@@ -135,7 +133,7 @@ func parsePositiveDuration(name, raw string) (time.Duration, error) {
 }
 
 // resolveRunFilePath picks where running.json lives. An explicit AO_RUN_FILE
-// wins; otherwise it sits under the per-user state directory so multiple repos
+// wins; otherwise it sits under the per-user config directory so multiple repos
 // share one supervisor handshake location.
 func resolveRunFilePath() (string, error) {
 	if p, ok := os.LookupEnv("AO_RUN_FILE"); ok && p != "" {
@@ -149,7 +147,7 @@ func resolveRunFilePath() (string, error) {
 }
 
 // resolveDataDir picks where durable state (the SQLite DB) lives. An explicit
-// AO_DATA_DIR wins; otherwise it sits under the per-user state directory
+// AO_DATA_DIR wins; otherwise it sits under the per-user config directory
 // alongside running.json.
 func resolveDataDir() (string, error) {
 	if p, ok := os.LookupEnv("AO_DATA_DIR"); ok && p != "" {

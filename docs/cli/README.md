@@ -28,8 +28,8 @@ The CLI and daemon share the same environment-driven config:
 | Var | Default | Purpose |
 |---|---|---|
 | `AO_PORT` | `3001` | Loopback daemon port. |
-| `AO_RUN_FILE` | OS config dir `agent-orchestrator/running.json` | PID/port handshake. |
-| `AO_DATA_DIR` | OS data dir `agent-orchestrator` | SQLite data directory. |
+| `AO_RUN_FILE` | `<UserConfigDir>/agent-orchestrator/running.json` | PID/port handshake. |
+| `AO_DATA_DIR` | `<UserConfigDir>/agent-orchestrator/data` | SQLite data directory. |
 | `AO_REQUEST_TIMEOUT` | `60s` | REST request timeout. |
 | `AO_SHUTDOWN_TIMEOUT` | `10s` | Graceful shutdown cap. |
 

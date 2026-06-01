@@ -10,12 +10,9 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
-// lifecycleStack owns the running lifecycle reducer and runtime reaper. The
-// reducer writes session facts; the reaper probes live runtimes and reports
-// observations back through it.
+// lifecycleStack owns the runtime reaper goroutine started with the lifecycle
+// reducer. The reducer itself is only used for wiring observations into storage.
 type lifecycleStack struct {
-	LCM        *lifecycle.Manager
-	Store      *sqlite.Store
 	reaperDone <-chan struct{}
 }
 
@@ -24,7 +21,7 @@ type lifecycleStack struct {
 func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runtime, logger *slog.Logger) *lifecycleStack {
 	lcm := lifecycle.New(store, nil)
 	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
-	return &lifecycleStack{LCM: lcm, Store: store, reaperDone: rp.Start(ctx)}
+	return &lifecycleStack{reaperDone: rp.Start(ctx)}
 }
 
 // Stop waits for the reaper goroutine to exit. The caller must cancel the ctx

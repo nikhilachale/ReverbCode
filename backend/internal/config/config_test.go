@@ -1,6 +1,8 @@
 package config
 
 import (
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -31,8 +33,14 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.RunFilePath == "" {
 		t.Error("RunFilePath is empty, want a resolved default path")
 	}
+	if !strings.HasSuffix(cfg.RunFilePath, filepath.Join("agent-orchestrator", "running.json")) {
+		t.Errorf("RunFilePath = %q, want agent-orchestrator/running.json suffix", cfg.RunFilePath)
+	}
 	if cfg.DataDir == "" {
 		t.Error("DataDir is empty, want a resolved default path")
+	}
+	if !strings.HasSuffix(cfg.DataDir, filepath.Join("agent-orchestrator", "data")) {
+		t.Errorf("DataDir = %q, want agent-orchestrator/data suffix", cfg.DataDir)
 	}
 }
 

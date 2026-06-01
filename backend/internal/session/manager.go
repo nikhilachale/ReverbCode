@@ -270,7 +270,7 @@ func (m *Manager) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
 	}
-	return domain.Session{SessionRecord: rec, Status: domain.DeriveStatus(rec, displayPR(prs))}, nil
+	return domain.Session{SessionRecord: rec, Status: domain.DeriveStatus(rec, domain.DisplayPR(prs))}, nil
 }
 
 func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
@@ -320,17 +320,4 @@ func workspaceInfo(rec domain.SessionRecord) ports.WorkspaceInfo {
 		SessionID: rec.ID,
 		ProjectID: rec.ProjectID,
 	}
-}
-
-func displayPR(prs []domain.PRFacts) domain.PRFacts {
-	if len(prs) == 0 {
-		return domain.PRFacts{}
-	}
-	pick := prs[0]
-	for _, pr := range prs {
-		if !pr.Merged && !pr.Closed {
-			return pr
-		}
-	}
-	return pick
 }

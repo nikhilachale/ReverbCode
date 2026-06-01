@@ -80,15 +80,6 @@ func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 	l.store.sessions[id] = rec
 	return nil
 }
-func (l *fakeLCM) ApplyRuntimeObservation(context.Context, domain.SessionID, ports.RuntimeFacts) error {
-	return nil
-}
-func (l *fakeLCM) ApplyActivitySignal(context.Context, domain.SessionID, ports.ActivitySignal) error {
-	return nil
-}
-func (l *fakeLCM) ApplyPRObservation(context.Context, domain.SessionID, ports.PRObservation) error {
-	return nil
-}
 
 type fakeRuntime struct {
 	createErr          error
@@ -246,15 +237,5 @@ func TestCleanup_ReclaimsTerminalWorkspaces(t *testing.T) {
 	}
 	if ws.destroyed != 1 {
 		t.Fatal("live workspace must not be destroyed")
-	}
-}
-
-func TestDisplayPRPrefersNonClosedPRInSessionLayer(t *testing.T) {
-	prs := []domain.PRFacts{
-		{Exists: true, URL: "closed", Closed: true, CI: domain.CIPassing},
-		{Exists: true, URL: "open", CI: domain.CIFailing},
-	}
-	if got := displayPR(prs); got.URL != "open" {
-		t.Fatalf("displayPR should select open PR, got %+v", got)
 	}
 }

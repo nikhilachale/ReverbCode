@@ -80,7 +80,7 @@ func (s *Server) Run(ctx context.Context) error {
 		return fmt.Errorf("write run-file: %w", err)
 	}
 	defer func() {
-		if err := runfile.Remove(s.cfg.RunFilePath); err != nil {
+		if err := runfile.RemoveIfOwned(s.cfg.RunFilePath, info.PID); err != nil {
 			s.log.Warn("failed to remove run-file", "path", s.cfg.RunFilePath, "err", err)
 		}
 	}()

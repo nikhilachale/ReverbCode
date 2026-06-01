@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -91,26 +90,6 @@ func TestParseWorktreePorcelain(t *testing.T) {
 	}
 	if !recs[3].Bare {
 		t.Fatalf("bare record = %#v", recs[3])
-	}
-}
-
-func TestFilterProjectWorktrees(t *testing.T) {
-	root := filepath.Clean("/managed/proj")
-	recs := []worktreeRecord{
-		{Path: "/repo", Branch: "main"},
-		{Path: "/managed/proj/s1", Branch: "feature/one"},
-		{Path: "/managed/proj/s2", Branch: ""},
-		{Path: "/managed/other/s3", Branch: "feature/three"},
-	}
-	got := filterProjectWorktrees(recs, root, domain.ProjectID("proj"))
-	if len(got) != 2 {
-		t.Fatalf("len = %d, want 2: %#v", len(got), got)
-	}
-	if got[0].SessionID != "s1" || got[0].Branch != "feature/one" || got[0].ProjectID != "proj" {
-		t.Fatalf("first = %#v", got[0])
-	}
-	if got[1].SessionID != "s2" || got[1].Branch != "" {
-		t.Fatalf("second = %#v", got[1])
 	}
 }
 

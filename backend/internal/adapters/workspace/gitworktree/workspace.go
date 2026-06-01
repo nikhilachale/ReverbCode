@@ -155,26 +155,6 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 	return nil
 }
 
-// List returns the managed worktrees that belong to a project.
-func (w *Workspace) List(ctx context.Context, project domain.ProjectID) ([]ports.WorkspaceInfo, error) {
-	if project == "" {
-		return nil, errors.New("gitworktree: project id is required")
-	}
-	repo, err := w.repoPath(project)
-	if err != nil {
-		return nil, err
-	}
-	records, err := w.listRecords(ctx, repo)
-	if err != nil {
-		return nil, err
-	}
-	projectRoot, err := w.projectRoot(project)
-	if err != nil {
-		return nil, err
-	}
-	return filterProjectWorktrees(records, projectRoot, project), nil
-}
-
 // Restore re-attaches to an existing worktree for the session if one is still
 // present, recreating the handle without disturbing its contents.
 func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
@@ -358,11 +338,6 @@ func (w *Workspace) managedPath(project domain.ProjectID, session domain.Session
 	return w.validateManagedPath(path)
 }
 
-func (w *Workspace) projectRoot(project domain.ProjectID) (string, error) {
-	path := filepath.Join(w.managedRoot, string(project))
-	return w.validateManagedPath(path)
-}
-
 func (w *Workspace) validateManagedPath(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("%w: empty path", ErrUnsafePath)
@@ -395,24 +370,6 @@ func pathWithin(root, path string) (bool, error) {
 		return false, fmt.Errorf("gitworktree: compare paths: %w", err)
 	}
 	return rel == "." || (rel != "" && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))), nil
-}
-
-func filterProjectWorktrees(records []worktreeRecord, projectRoot string, project domain.ProjectID) []ports.WorkspaceInfo {
-	out := make([]ports.WorkspaceInfo, 0, len(records))
-	for _, rec := range records {
-		path := filepath.Clean(rec.Path)
-		inside, err := pathWithin(projectRoot, path)
-		if err != nil || !inside || path == projectRoot {
-			continue
-		}
-		out = append(out, ports.WorkspaceInfo{
-			Path:      path,
-			Branch:    rec.Branch,
-			SessionID: domain.SessionID(filepath.Base(path)),
-			ProjectID: project,
-		})
-	}
-	return out
 }
 
 func findWorktree(records []worktreeRecord, path string) (worktreeRecord, bool) {
