@@ -14,7 +14,9 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/messenger/inbox"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -24,18 +26,25 @@ import (
 // secondaries whose failures are logged at WARN and swallowed. Inner is public
 // so wiring tests can assert the daemon assembles the composite with the
 // expected ordering (inbox first, panep second).
+//
+// Each Send pins one timestamp via inbox.WithTime so inner messengers that
+// derive a filename from (t, message) agree on the same name — without this,
+// the inbox file write and a downstream panep ping would land on different
+// nanoseconds and the ping would point at a file that does not exist.
 type Messenger struct {
 	Inner  []ports.AgentMessenger
 	Logger *slog.Logger
+	Clock  func() time.Time
 }
 
 // New builds a Messenger. A nil logger is replaced with a discard logger so a
-// secondary failure never panics a misconfigured caller.
+// secondary failure never panics a misconfigured caller. Clock defaults to
+// time.Now.
 func New(inner []ports.AgentMessenger, logger *slog.Logger) *Messenger {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	return &Messenger{Inner: inner, Logger: logger}
+	return &Messenger{Inner: inner, Logger: logger, Clock: time.Now}
 }
 
 var _ ports.AgentMessenger = (*Messenger)(nil)
@@ -47,6 +56,7 @@ func (c *Messenger) Send(ctx context.Context, id domain.SessionID, message strin
 	if len(c.Inner) == 0 {
 		return nil
 	}
+	ctx = inbox.WithTime(ctx, c.Clock())
 	if err := c.Inner[0].Send(ctx, id, message); err != nil {
 		return err
 	}

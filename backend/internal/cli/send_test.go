@@ -10,7 +10,7 @@ import (
 )
 
 // sendServer wires an httptest server expecting POST /api/v1/sessions/{id}/send
-// and captures the request body and path the CLI hit.
+// and capturetures the request body and path the CLI hit.
 type sendCapture struct {
 	body string
 	path string
@@ -18,7 +18,7 @@ type sendCapture struct {
 
 func sendServer(t *testing.T, status int, respBody string) (*httptest.Server, *sendCapture) {
 	t.Helper()
-	cap := &sendCapture{}
+	capture := &sendCapture{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.NotFound(w, r)
@@ -32,19 +32,19 @@ func sendServer(t *testing.T, status int, respBody string) (*httptest.Server, *s
 		if err != nil {
 			t.Fatalf("read body: %v", err)
 		}
-		cap.body = string(body)
-		cap.path = r.URL.Path
+		capture.body = string(body)
+		capture.path = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, respBody)
 	}))
 	t.Cleanup(srv.Close)
-	return srv, cap
+	return srv, capture
 }
 
 func TestSend_Success(t *testing.T) {
 	cfg := setConfigEnv(t)
-	srv, cap := sendServer(t, http.StatusOK,
+	srv, capture := sendServer(t, http.StatusOK,
 		`{"ok":true,"sessionId":"demo-1","message":"hello agent"}`)
 	writeRunFileFor(t, cfg, srv)
 
@@ -54,17 +54,39 @@ func TestSend_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
 	}
-	if cap.path != "/api/v1/sessions/demo-1/send" {
-		t.Errorf("path = %q, want /api/v1/sessions/demo-1/send", cap.path)
+	if capture.path != "/api/v1/sessions/demo-1/send" {
+		t.Errorf("path = %q, want /api/v1/sessions/demo-1/send", capture.path)
 	}
 	var req struct {
 		Message string `json:"message"`
 	}
-	if err := json.Unmarshal([]byte(cap.body), &req); err != nil {
-		t.Fatalf("decode body: %v\nbody=%s", err, cap.body)
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
 	}
 	if req.Message != "hello agent" {
-		t.Errorf("captured message = %q, want %q", req.Message, "hello agent")
+		t.Errorf("capturetured message = %q, want %q", req.Message, "hello agent")
+	}
+}
+
+func TestSend_TrimsLeadingAndTrailingWhitespace(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, captureture := sendServer(t, http.StatusOK, `{"ok":true,"sessionId":"demo-1","message":"hi"}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "send", "--session", "demo-1", "--message", "  hi  ")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var req struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(captureture.body), &req); err != nil {
+		t.Fatalf("decode body: %v\nbody=%s", err, captureture.body)
+	}
+	if req.Message != "hi" {
+		t.Errorf("server received %q, want trimmed %q", req.Message, "hi")
 	}
 }
 
@@ -136,7 +158,7 @@ func TestSend_ServerInternalErrorExits1(t *testing.T) {
 		`{"error":"internal","code":"SESSION_OPERATION_FAILED","message":"Session operation failed"}`)
 	writeRunFileFor(t, cfg, srv)
 
-	_, _, err := executeCLI(t, Deps{
+	_, errOut, err := executeCLI(t, Deps{
 		ProcessAlive: func(int) bool { return true },
 	}, "send", "--session", "demo-1", "--message", "hi")
 	if err == nil {
@@ -144,6 +166,12 @@ func TestSend_ServerInternalErrorExits1(t *testing.T) {
 	}
 	if got := ExitCode(err); got != 1 {
 		t.Fatalf("exit code = %d, want 1", got)
+	}
+	// Regression guard: a future change that swallows the API envelope and
+	// prints only "daemon returned HTTP 500" would silently hide what the
+	// daemon was trying to tell the operator.
+	if !strings.Contains(err.Error(), "internal") && !strings.Contains(errOut, "internal") {
+		t.Fatalf("error did not include server kind: %v\nstderr=%s", err, errOut)
 	}
 }
 

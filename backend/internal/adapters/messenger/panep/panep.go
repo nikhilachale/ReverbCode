@@ -47,11 +47,6 @@ func New(runtime RuntimePaneWriter, lookup SessionLookup) *Messenger {
 	return &Messenger{runtime: runtime, lookup: lookup, clock: time.Now}
 }
 
-// SetClock overrides the time source used to derive the inbox filename the
-// ping points at. Exposed for tests so they can pin the filename without
-// racing the system clock.
-func (m *Messenger) SetClock(now func() time.Time) { m.clock = now }
-
 var _ ports.AgentMessenger = (*Messenger)(nil)
 
 // Send pings the agent pane with a pointer to .ao/inbox/<file>. The filename
@@ -70,7 +65,11 @@ func (m *Messenger) Send(ctx context.Context, id domain.SessionID, message strin
 		return fmt.Errorf("panep: empty workspace path for %s", id)
 	}
 
-	filename := inbox.FilenameFor(m.clock(), message)
+	// Reads the timestamp the composite messenger stashed via inbox.WithTime
+	// so the filename here matches what the inbox messenger just wrote. Outside
+	// a composite, falls back to m.clock — useful for tests and any future
+	// caller that uses panep stand-alone.
+	filename := inbox.FilenameFor(inbox.TimeFromContext(ctx, m.clock), message)
 	body := fmt.Sprintf("📥 ao: new message at .ao/inbox/%s — please read it", filename)
 	handle := ports.RuntimeHandle{ID: handleID}
 	if err := m.runtime.WriteChars(ctx, handle, body); err != nil {

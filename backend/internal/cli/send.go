@@ -64,7 +64,7 @@ func (c *commandContext) sendMessage(ctx context.Context, opts sendOptions) erro
 		return errors.New("AO daemon is not running; start it with `ao start`")
 	}
 
-	body, err := json.Marshal(sendAPIRequest{Message: opts.message})
+	body, err := json.Marshal(sendAPIRequest{Message: message})
 	if err != nil {
 		return fmt.Errorf("encode request: %w", err)
 	}

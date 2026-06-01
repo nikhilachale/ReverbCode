@@ -47,9 +47,11 @@ func TestSend_PingsPaneWithFilenameMatchingInbox(t *testing.T) {
 	rt := &fakeRuntime{}
 	fixed := time.Unix(1717171717, 42).UTC()
 	m := panep.New(rt, lookup)
-	m.SetClock(func() time.Time { return fixed })
 
-	if err := m.Send(context.Background(), "s-1", "ε hello"); err != nil {
+	// In production the composite injects the timestamp via inbox.WithTime so
+	// the panep ping filename matches what inbox just wrote. Pin it here.
+	ctx := inbox.WithTime(context.Background(), fixed)
+	if err := m.Send(ctx, "s-1", "ε hello"); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(rt.calls) != 2 {
