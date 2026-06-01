@@ -2,7 +2,6 @@ package ports
 
 import (
 	"context"
-	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -20,9 +19,6 @@ type LifecycleManager interface {
 	OnSpawnCompleted(ctx context.Context, id domain.SessionID, o SpawnOutcome) error
 	OnKillRequested(ctx context.Context, id domain.SessionID) error
 
-	// TickEscalations fires the duration-based escalations the synchronous LCM
-	// can't wake itself for; the reaper calls it on a timer.
-	TickEscalations(ctx context.Context, now time.Time) error
 	// RunningSessions snapshots every non-terminal session for the reaper to probe.
 	RunningSessions(ctx context.Context) ([]domain.SessionRecord, error)
 }

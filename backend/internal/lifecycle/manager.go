@@ -14,11 +14,10 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// Manager reduces runtime, activity, PR, spawn, and kill observations into durable session facts and reactions.
+// Manager reduces runtime, activity, PR, spawn, and kill observations into durable session facts and agent nudges.
 type Manager struct {
 	store     ports.SessionStore
 	pr        ports.PRWriter
-	notifier  ports.Notifier
 	messenger ports.AgentMessenger
 
 	mu     sync.Mutex
@@ -31,10 +30,10 @@ type Manager struct {
 var _ ports.LifecycleManager = (*Manager)(nil)
 
 // New builds a Lifecycle Manager over its collaborators: the session store it
-// is the sole writer of, the PR-facts writer, the notifier, and the messenger
-// used to nudge running agents.
-func New(store ports.SessionStore, pr ports.PRWriter, notifier ports.Notifier, messenger ports.AgentMessenger) *Manager {
-	return &Manager{store: store, pr: pr, notifier: notifier, messenger: messenger, window: defaultRecentActivityWindow, clock: time.Now, react: newReactionState()}
+// is the sole writer of, the PR-facts writer, and the messenger used to nudge
+// running agents.
+func New(store ports.SessionStore, pr ports.PRWriter, messenger ports.AgentMessenger) *Manager {
+	return &Manager{store: store, pr: pr, messenger: messenger, window: defaultRecentActivityWindow, clock: time.Now, react: newReactionState()}
 }
 
 func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domain.SessionRecord) (domain.SessionRecord, bool)) (bool, error) {
@@ -112,7 +111,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	if !o.Fetched {
 		return nil
 	}
-	rec, ok, err := m.store.GetSession(ctx, id)
+	_, ok, err := m.store.GetSession(ctx, id)
 	if err != nil || !ok {
 		return err
 	}
@@ -133,7 +132,6 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		}
 		if changed {
 			m.clearReactions(id)
-			return m.fireNotify(ctx, id, rec.ProjectID, rxMerged, reactions[rxMerged])
 		}
 		return nil
 	}

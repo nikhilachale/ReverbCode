@@ -27,8 +27,8 @@ const DefaultTickInterval = 5 * time.Second
 type Config struct {
 	// Tick is the interval between ticks. <=0 means DefaultTickInterval.
 	Tick time.Duration
-	// Clock supplies ObservedAt and TickEscalations now stamps. nil means
-	// time.Now. Injected in tests so assertions don't race wallclock.
+	// Clock supplies ObservedAt stamps. nil means time.Now. Injected in tests so
+	// assertions don't race wallclock.
 	Clock func() time.Time
 	// Logger receives operational diagnostics (probe errors, skipped sessions,
 	// LCM call failures). The reaper logs but does not propagate these errors
@@ -95,28 +95,17 @@ func (r *Reaper) loop(ctx context.Context, done chan<- struct{}) {
 	}
 }
 
-// Tick runs one observation cycle: it always fires TickEscalations first (the
-// duration-based escalation heartbeat, which the synchronous LCM cannot wake
-// itself to drive), then enumerates the LCM's running sessions, probes each
-// one's runtime, and reports any non-alive result back as a fact.
+// Tick runs one observation cycle: it enumerates the LCM's running sessions,
+// probes each one's runtime, and reports any non-alive result back as a fact.
 //
 // Tick is exported so the daemon (and tests) can drive cycles synchronously,
 // and so the Start goroutine has a single chokepoint to log against.
 //
 // Errors: only the RunningSessions failure is propagated, since it short-
-// circuits the rest of the cycle. TickEscalations and per-session
-// ApplyRuntimeObservation failures are logged but never propagated — one
-// failed call must not bring down the loop.
+// circuits the rest of the cycle. Per-session ApplyRuntimeObservation failures
+// are logged but never propagated — one failed call must not bring down the loop.
 func (r *Reaper) Tick(ctx context.Context) error {
 	now := r.clock()
-
-	// Heartbeat is best-effort and runs before enumeration so duration-based
-	// escalations still fire if the running-set lookup is the thing that
-	// errored. The LCM's TickEscalations is itself idempotent — at worst we miss
-	// escalating once and pick it up next tick.
-	if err := r.lcm.TickEscalations(ctx, now); err != nil {
-		r.logger.Error("reaper: TickEscalations failed", "err", err)
-	}
 
 	sessions, err := r.lcm.RunningSessions(ctx)
 	if err != nil {

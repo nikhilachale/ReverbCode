@@ -10,7 +10,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
-	"github.com/aoagents/agent-orchestrator/backend/internal/notification"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/reaper"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/session"
@@ -34,9 +33,7 @@ type lifecycleStack struct {
 // TEMPORARY STUBS (replace as the daemon lane lands the collaborators):
 //   - noopMessenger — swap for the runtime/agent-plugin-backed AgentMessenger.
 func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runtime, logger *slog.Logger) *lifecycleStack {
-	renderer := notification.NewRenderer(store)
-	notifier := notification.NewEnqueuer(store, renderer, logger)
-	lcm := lifecycle.New(store, store, notifier, noopMessenger{})
+	lcm := lifecycle.New(store, store, noopMessenger{})
 	rp := reaper.New(lcm, runtime, reaper.Config{Logger: logger})
 	return &lifecycleStack{LCM: lcm, Store: store, reaperDone: rp.Start(ctx)}
 }
@@ -54,8 +51,8 @@ type sessionStack struct {
 
 // startSession constructs the Session Manager over the configured Runtime and
 // gitworktree Workspace, the LCM and adapter created by startLifecycle, and the
-// loud-stub Agent / Messenger / Notifier ports that have no production
-// implementations yet. It does NOT mount any HTTP routes — those come with the
+// loud-stub Agent / Messenger ports that have no production implementations yet.
+// It does NOT mount any HTTP routes — those come with the
 // daemon lane (#10). Returning the SM here lets main hold the wired-but-quiet
 // instance so future route wiring is a one-line plumb-through.
 func startSession(ctx context.Context, cfg config.Config, runtime ports.Runtime, ls *lifecycleStack, log *slog.Logger) (*sessionStack, error) {
@@ -89,9 +86,9 @@ func startSession(ctx context.Context, cfg config.Config, runtime ports.Runtime,
 	return &sessionStack{SM: sm}, nil
 }
 
-// noopMessenger is a TEMPORARY stub (see startLifecycle): the durable write
-// path and durable notifications work without it; only live agent nudges are
-// absent until the real runtime/agent plugin is wired.
+// noopMessenger is a TEMPORARY stub (see startLifecycle): durable writes work
+// without it; only live agent nudges are absent until the real runtime/agent
+// plugin is wired.
 type noopMessenger struct{}
 
 func (noopMessenger) Send(context.Context, domain.SessionID, string) error { return nil }

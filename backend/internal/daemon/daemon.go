@@ -42,8 +42,8 @@ func Run() error {
 	// capture changes into change_log, the poller tails it, and the broadcaster
 	// fans events out to the SSE transport. The LCM/Session Manager and the HTTP
 	// API routes that drive and read this store are owned by the daemon lane and
-	// are wired there once their collaborators (Notifier, AgentMessenger, and the
-	// runtime/agent/workspace plugins) have production implementations; here we
+	// are wired there once their collaborators (AgentMessenger and the runtime/agent/workspace
+	// plugins) have production implementations; here we
 	// stand up the persistence + change-delivery foundation they build on.
 	store, err := sqlite.Open(cfg.DataDir)
 	if err != nil {
@@ -87,9 +87,8 @@ func Run() error {
 	// Bring up the Session Manager. Runtime (Zellij) and Workspace (gitworktree)
 	// are real on main; ports.Agent has no production adapter yet, so a loud
 	// stub returns a sentinel command that makes any Spawn fail at the runtime
-	// layer rather than start a broken session quietly. Notifier and
-	// AgentMessenger remain stubbed alongside the LCM until their multiplexers
-	// land. No HTTP routes wire to this yet — the daemon lane (#10) owns API
+	// layer rather than start a broken session quietly. AgentMessenger remains
+	// stubbed alongside the LCM until its multiplexer lands. No HTTP routes wire to this yet — the daemon lane (#10) owns API
 	// surfacing — so we hold the SM in a local until it does.
 	sStack, err := startSession(ctx, cfg, runtimeAdapter, lcStack, log)
 	if err != nil {

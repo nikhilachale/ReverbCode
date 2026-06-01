@@ -3,8 +3,6 @@ package integration
 import (
 	"context"
 	"encoding/json"
-	"io"
-	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -12,7 +10,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
-	"github.com/aoagents/agent-orchestrator/backend/internal/notification"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/session"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
@@ -91,8 +88,7 @@ func newStack(t *testing.T) *stack {
 		t.Fatal(err)
 	}
 	msg := &captureMessenger{}
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	lcm := lifecycle.New(store, store, notification.NewEnqueuer(store, notification.NewRenderer(store), logger), msg)
+	lcm := lifecycle.New(store, store, msg)
 	rt := &stubRuntime{}
 	ws := &stubWorkspace{}
 	sm := session.New(session.Deps{Runtime: rt, Agent: stubAgent{}, Workspace: ws, Store: store, Messenger: msg, Lifecycle: lcm})
@@ -179,43 +175,5 @@ func TestCDCPollerReceivesSessionAndPREvents(t *testing.T) {
 	}
 	if len(got) < 2 {
 		t.Fatalf("want CDC events, got %d", len(got))
-	}
-}
-
-func TestDurableNotificationNeedsInput(t *testing.T) {
-	ctx := context.Background()
-	st := newStack(t)
-	sess, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.lcm.ApplyActivitySignal(ctx, sess.ID, ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput, Timestamp: time.Now()}); err != nil {
-		t.Fatal(err)
-	}
-	rows, err := st.store.ListNotifications(ctx, sqlite.NotificationFilter{ProjectID: "mer", Limit: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 1 || rows[0].SemanticType != "session.needs_input" {
-		t.Fatalf("notifications = %+v", rows)
-	}
-}
-
-func TestDurableNotificationPRMerged(t *testing.T) {
-	ctx := context.Background()
-	st := newStack(t)
-	sess, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.lcm.ApplyPRObservation(ctx, sess.ID, ports.PRObservation{Fetched: true, URL: "pr1", Number: 1, Merged: true}); err != nil {
-		t.Fatal(err)
-	}
-	rows, err := st.store.ListNotifications(ctx, sqlite.NotificationFilter{ProjectID: "mer", Limit: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 1 || rows[0].SemanticType != "pr.merged" {
-		t.Fatalf("notifications = %+v", rows)
 	}
 }

@@ -2,7 +2,6 @@ package ports
 
 import (
 	"context"
-	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -33,57 +32,9 @@ type PRWriter interface {
 	RecentCheckStatuses(ctx context.Context, prURL, name string, limit int) ([]domain.PRCheckStatus, error)
 }
 
-// Notifier delivers an event to the human (desktop/Slack later). Push, never poll.
-type Notifier interface {
-	Notify(ctx context.Context, event Event) error
-}
-
 // AgentMessenger injects a message into a running agent. Used by auto-nudge reactions.
 type AgentMessenger interface {
 	Send(ctx context.Context, id domain.SessionID, message string) error
-}
-
-// Priority ranks a notification's urgency so a notifier can decide how loudly
-// to surface it, from PriorityUrgent down to PriorityInfo.
-type Priority string
-
-// Notification priorities, highest urgency first.
-const (
-	PriorityUrgent  Priority = "urgent"
-	PriorityAction  Priority = "action"
-	PriorityWarning Priority = "warning"
-	PriorityInfo    Priority = "info"
-)
-
-// Event is a human-facing notification produced by a reaction. It carries the
-// stable reaction/escalation context a durable notification renderer needs,
-// while lifecycle remains responsible for deciding what should notify.
-type Event struct {
-	Type       string
-	Priority   Priority
-	SessionID  domain.SessionID
-	ProjectID  domain.ProjectID
-	Message    string
-	Reaction   *ReactionEvent
-	Escalation *EscalationEvent
-	DedupeKey  string
-	CauseKey   string
-	OccurredAt time.Time
-}
-
-// ReactionEvent is the reaction context carried on an Event: which reaction
-// fired and whether it merely notified or escalated.
-type ReactionEvent struct {
-	Key    string // agent-needs-input, approved-and-green, ci-failed, etc.
-	Action string // notify | escalated
-}
-
-// EscalationEvent is the escalation context carried on an Event once a reaction
-// has exhausted its retry/attempt/duration budget.
-type EscalationEvent struct {
-	Attempts   int
-	Cause      string // max_retries | max_attempts | max_duration
-	DurationMs int64
 }
 
 // ---- runtime / agent / workspace plugin ports (used by the Session Manager) ----

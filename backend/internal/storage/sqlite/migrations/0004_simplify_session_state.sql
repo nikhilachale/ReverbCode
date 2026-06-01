@@ -2,6 +2,9 @@
 -- +goose StatementBegin
 DROP TRIGGER IF EXISTS sessions_cdc_update;
 DROP TRIGGER IF EXISTS sessions_cdc_insert;
+DROP TRIGGER IF EXISTS notifications_cdc_update;
+DROP TRIGGER IF EXISTS notifications_cdc_insert;
+DROP TABLE IF EXISTS notifications;
 
 ALTER TABLE sessions ADD COLUMN is_terminated BOOLEAN NOT NULL DEFAULT FALSE;
 

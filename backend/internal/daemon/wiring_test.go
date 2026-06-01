@@ -14,7 +14,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
-	"github.com/aoagents/agent-orchestrator/backend/internal/notification"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/session"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
@@ -39,10 +38,7 @@ func TestWiring_WriteFlowsToBroadcaster(t *testing.T) {
 	}
 	defer store.Close()
 
-	renderer := notification.NewRenderer(store)
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	notifier := notification.NewEnqueuer(store, renderer, logger)
-	lcm := lifecycle.New(store, store, notifier, noopMessenger{})
+	lcm := lifecycle.New(store, store, noopMessenger{})
 
 	bcast := cdc.NewBroadcaster()
 	poller := cdc.NewPoller(cdcSource{store}, bcast, cdc.PollerConfig{})

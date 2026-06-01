@@ -1,20 +1,17 @@
 package lifecycle
 
 // reactions.go is the ACT layer: after a persisted transition the engine maps
-// the session's (state, PR facts) to at most one reaction and dispatches it —
-// nudging the agent or paging the human. Two reactions inject live content (CI
-// logs, review comments) and re-fire when that content changes; the rest fire
-// once on entry, with duration escalation driven by TickEscalations.
+// the session's (state, PR facts) to at most one agent nudge. Two reactions
+// inject live content (CI logs, review comments) and re-fire when that content
+// changes; the rest fire once on entry.
 //
 // Budgets are in-memory: a restart re-arms them, which costs a few extra nudges,
 // never a missed page.
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -27,40 +24,24 @@ const (
 	rxReviewComments reactionKey = "review-comments"
 	rxMergeConflicts reactionKey = "merge-conflicts"
 	rxIdle           reactionKey = "agent-idle"
-	rxApprovedGreen  reactionKey = "approved-and-green"
-	rxStuck          reactionKey = "agent-stuck"
-	rxNeedsInput     reactionKey = "agent-needs-input"
-	rxPRClosed       reactionKey = "pr-closed"
-	rxMerged         reactionKey = "pr-merged"
 )
 
-// Brakes: stop auto-handling and page a human after this many failed attempts.
+// Brakes: stop auto-handling after this many failed attempts.
 const (
 	ciBrakeRuns    = 3 // last N runs of a failing check all failed
 	reviewMaxNudge = 3 // re-nudged the agent N times over new review feedback
 )
 
-// reactionConfig is one row of the reaction table. toAgent reactions nudge the
-// agent; the rest notify the human. escalateAfter (when set) drives a
-// duration-based escalation via TickEscalations.
+// reactionConfig is one row of the reaction table.
 type reactionConfig struct {
-	toAgent       bool
-	message       string
-	eventType     string
-	priority      ports.Priority
-	escalateAfter time.Duration
+	message string
 }
 
 var reactions = map[reactionKey]reactionConfig{
-	rxCIFailed:       {toAgent: true, eventType: "reaction.ci-failed", priority: ports.PriorityAction, message: "CI is failing on your PR. Review the output below and push a fix."},
-	rxReviewComments: {toAgent: true, eventType: "reaction.review-comments", priority: ports.PriorityAction, message: "A reviewer left feedback on your PR. Address it and push."},
-	rxMergeConflicts: {toAgent: true, eventType: "reaction.merge-conflicts", priority: ports.PriorityAction, escalateAfter: 15 * time.Minute, message: "Your PR has merge conflicts. Rebase onto the base branch and resolve them."},
-	rxIdle:           {toAgent: true, eventType: "reaction.agent-idle", priority: ports.PriorityInfo, escalateAfter: 15 * time.Minute, message: "You appear idle. Continue the task or say what is blocking you."},
-	rxApprovedGreen:  {eventType: "reaction.approved-and-green", priority: ports.PriorityAction, message: "PR is approved and green — ready to merge."},
-	rxStuck:          {eventType: "reaction.agent-stuck", priority: ports.PriorityUrgent, message: "Agent is stuck and needs attention."},
-	rxNeedsInput:     {eventType: "reaction.agent-needs-input", priority: ports.PriorityUrgent, message: "Agent needs input to continue."},
-	rxPRClosed:       {eventType: "reaction.pr-closed", priority: ports.PriorityAction, message: "PR was closed without merging."},
-	rxMerged:         {eventType: "reaction.pr-merged", priority: ports.PriorityInfo, message: "PR merged — work complete."},
+	rxCIFailed:       {message: "CI is failing on your PR. Review the output below and push a fix."},
+	rxReviewComments: {message: "A reviewer left feedback on your PR. Address it and push."},
+	rxMergeConflicts: {message: "Your PR has merge conflicts. Rebase onto the base branch and resolve them."},
+	rxIdle:           {message: "You appear idle. Continue the task or say what is blocking you."},
 }
 
 // reactionContent carries the live material the feedback reactions inject. Empty
@@ -78,7 +59,7 @@ type reactionContent struct {
 func prContent(o ports.PRObservation) reactionContent {
 	c := reactionContent{}
 	for _, ch := range o.Checks {
-		if ch.Status == "failed" {
+		if ch.Status == domain.PRCheckFailed {
 			c.ciCheck, c.ciCommit, c.ciLogTail, c.ciURL = ch.Name, ch.CommitHash, ch.LogTail, o.URL
 			break
 		}
@@ -104,11 +85,9 @@ type trackerKey struct {
 
 type tracker struct {
 	attempts  int
-	firstAt   time.Time
-	escalated bool
+	exhausted bool
 	seenSig   bool
 	lastSig   string
-	projectID domain.ProjectID
 }
 
 type reactionState struct {
@@ -153,8 +132,6 @@ func (m *Manager) runReactions(ctx context.Context, id domain.SessionID, content
 	if err != nil || !ok {
 		return err
 	}
-	project := rec.ProjectID
-
 	if rec.IsTerminated {
 		m.clearReactions(id)
 		return nil
@@ -169,23 +146,23 @@ func (m *Manager) runReactions(ctx context.Context, id domain.SessionID, content
 	// while the agent can actually act on it.
 	if pr.Exists && !pr.Closed && !needsHuman(rec.Activity.State) {
 		if pr.CI == domain.CIFailing && content.ciCheck != "" {
-			if err := m.handleCIFailure(ctx, id, project, content); err != nil {
+			if err := m.handleCIFailure(ctx, id, content); err != nil {
 				return err
 			}
 		}
 		if hasReviewFeedback(pr) {
-			if err := m.handleReviewFeedback(ctx, id, project, content); err != nil {
+			if err := m.handleReviewFeedback(ctx, id, content); err != nil {
 				return err
 			}
 		}
 	}
 
-	return m.dispatch(ctx, id, project, reactionFor(rec, pr))
+	return m.dispatch(ctx, id, reactionFor(rec, pr))
 }
 
 // dispatch fires the entry reaction for key, deduped so a steady state does not
 // re-fire. Leaving a reaction drops its budget.
-func (m *Manager) dispatch(ctx context.Context, id domain.SessionID, project domain.ProjectID, key reactionKey) error {
+func (m *Manager) dispatch(ctx context.Context, id domain.SessionID, key reactionKey) error {
 	m.react.mu.Lock()
 	if m.react.lastKey[id] == key {
 		m.react.mu.Unlock()
@@ -200,27 +177,18 @@ func (m *Manager) dispatch(ctx context.Context, id domain.SessionID, project dom
 	if key == "" {
 		return nil
 	}
-	cfg := reactions[key]
-	if cfg.toAgent {
-		return m.fireAgentEntry(ctx, id, project, key, cfg)
-	}
-	return m.fireNotify(ctx, id, project, key, cfg)
+	return m.fireAgentEntry(ctx, id, key, reactions[key])
 }
 
 // reactionFor maps (session state, PR facts) to the reaction to enter. CI failure
 // and review feedback return "" here — they are handled by the feedback path.
 func reactionFor(rec domain.SessionRecord, pr domain.PRFacts) reactionKey {
 	switch rec.Activity.State {
-	case domain.ActivityBlocked:
-		return rxStuck
-	case domain.ActivityWaitingInput:
-		return rxNeedsInput
+	case domain.ActivityBlocked, domain.ActivityWaitingInput:
+		return ""
 	}
 	if pr.Exists {
 		if pr.Closed {
-			if !pr.Merged {
-				return rxPRClosed
-			}
 			return ""
 		}
 		switch {
@@ -228,8 +196,6 @@ func reactionFor(rec domain.SessionRecord, pr domain.PRFacts) reactionKey {
 			return "" // feedback path
 		case pr.Mergeability == domain.MergeConflicting:
 			return rxMergeConflicts
-		case pr.Mergeability == domain.MergeMergeable, pr.Review == domain.ReviewApproved:
-			return rxApprovedGreen
 		}
 	}
 	if rec.Activity.State == domain.ActivityIdle || rec.Activity.State == domain.ActivityReady || rec.Activity.State == "" {
@@ -248,9 +214,9 @@ func needsHuman(s domain.ActivityState) bool {
 
 // ---- feedback reactions (content-driven re-fire + brake) ----
 
-func (m *Manager) handleCIFailure(ctx context.Context, id domain.SessionID, project domain.ProjectID, c reactionContent) error {
+func (m *Manager) handleCIFailure(ctx context.Context, id domain.SessionID, c reactionContent) error {
 	msg := reactions[rxCIFailed].message + "\n\nFailing output:\n" + c.ciLogTail
-	return m.fireFeedback(ctx, id, project, rxCIFailed, c.ciCommit, msg, func(int) (bool, error) {
+	return m.fireFeedback(ctx, id, rxCIFailed, c.ciCommit, msg, func(int) (bool, error) {
 		st, err := m.pr.RecentCheckStatuses(ctx, c.ciURL, c.ciCheck, ciBrakeRuns)
 		if err != nil {
 			return false, err
@@ -259,32 +225,29 @@ func (m *Manager) handleCIFailure(ctx context.Context, id domain.SessionID, proj
 	})
 }
 
-func (m *Manager) handleReviewFeedback(ctx context.Context, id domain.SessionID, project domain.ProjectID, c reactionContent) error {
+func (m *Manager) handleReviewFeedback(ctx context.Context, id domain.SessionID, c reactionContent) error {
 	msg := reactions[rxReviewComments].message
 	if len(c.comments) > 0 {
 		msg += "\n\n" + strings.Join(c.comments, "\n\n")
 	}
-	return m.fireFeedback(ctx, id, project, rxReviewComments, c.reviewSig, msg, func(attempts int) (bool, error) {
+	return m.fireFeedback(ctx, id, rxReviewComments, c.reviewSig, msg, func(attempts int) (bool, error) {
 		return attempts > reviewMaxNudge, nil
 	})
 }
 
 // fireFeedback nudges the agent with fresh content, deduped by signature so the
-// same content is not re-sent each poll. braked decides whether to escalate to a
-// human instead (CI: history; review: attempt count).
-func (m *Manager) fireFeedback(ctx context.Context, id domain.SessionID, project domain.ProjectID, key reactionKey, sig, message string, braked func(attempts int) (bool, error)) error {
+// same content is not re-sent each poll. braked decides whether to stop
+// retrying (CI: history; review: attempt count).
+func (m *Manager) fireFeedback(ctx context.Context, id domain.SessionID, key reactionKey, sig, message string, braked func(attempts int) (bool, error)) error {
 	m.react.mu.Lock()
 	t := m.react.trackerFor(id, key)
-	if project != "" {
-		t.projectID = project
-	}
-	if t.escalated || (t.seenSig && t.lastSig == sig) {
+	if t.exhausted || (t.seenSig && t.lastSig == sig) {
 		m.react.mu.Unlock()
 		return nil
 	}
 	t.seenSig, t.lastSig = true, sig
 	t.attempts++
-	attempts, pid := t.attempts, t.projectID
+	attempts := t.attempts
 	m.react.lastKey[id] = key // feedback owns the slot so a later dispatch("") clears it
 	m.react.mu.Unlock()
 
@@ -294,13 +257,9 @@ func (m *Manager) fireFeedback(ctx context.Context, id domain.SessionID, project
 	}
 	if brake {
 		m.react.mu.Lock()
-		t.escalated = true
+		t.exhausted = true
 		m.react.mu.Unlock()
-		cause := "max_attempts"
-		if key == rxCIFailed {
-			cause = "max_retries"
-		}
-		return m.escalate(ctx, id, pid, key, ports.EscalationEvent{Attempts: attempts, Cause: cause})
+		return nil
 	}
 	return m.messenger.Send(ctx, id, message)
 }
@@ -308,80 +267,17 @@ func (m *Manager) fireFeedback(ctx context.Context, id domain.SessionID, project
 // ---- entry reactions ----
 
 // fireAgentEntry nudges the agent once on entry into a static reaction
-// (idle/merge-conflicts); escalation is duration-based via TickEscalations.
-func (m *Manager) fireAgentEntry(ctx context.Context, id domain.SessionID, project domain.ProjectID, key reactionKey, cfg reactionConfig) error {
+// (idle/merge-conflicts).
+func (m *Manager) fireAgentEntry(ctx context.Context, id domain.SessionID, key reactionKey, cfg reactionConfig) error {
 	m.react.mu.Lock()
 	t := m.react.trackerFor(id, key)
-	if project != "" {
-		t.projectID = project
-	}
-	if t.escalated {
+	if t.exhausted {
 		m.react.mu.Unlock()
 		return nil
-	}
-	if t.firstAt.IsZero() {
-		t.firstAt = m.clock()
 	}
 	t.attempts++
 	m.react.mu.Unlock()
 	return m.messenger.Send(ctx, id, cfg.message)
-}
-
-func (m *Manager) fireNotify(ctx context.Context, id domain.SessionID, project domain.ProjectID, key reactionKey, cfg reactionConfig) error {
-	return m.notifier.Notify(ctx, ports.Event{
-		Type: cfg.eventType, Priority: cfg.priority,
-		SessionID: id, ProjectID: project, Message: cfg.message,
-		Reaction:   &ports.ReactionEvent{Key: string(key), Action: "notify"},
-		CauseKey:   string(key),
-		OccurredAt: m.clock(),
-	})
-}
-
-func (m *Manager) escalate(ctx context.Context, id domain.SessionID, project domain.ProjectID, key reactionKey, esc ports.EscalationEvent) error {
-	if esc.Cause == "" {
-		esc.Cause = "max_attempts"
-	}
-	return m.notifier.Notify(ctx, ports.Event{
-		Type: "reaction.escalated", Priority: ports.PriorityUrgent,
-		SessionID: id, ProjectID: project,
-		Message:    fmt.Sprintf("Automatic handling of %q is exhausted — needs a human.", key),
-		Reaction:   &ports.ReactionEvent{Key: string(key), Action: "escalated"},
-		Escalation: &esc,
-		CauseKey:   string(key) + ":" + esc.Cause,
-		OccurredAt: m.clock(),
-	})
-}
-
-// TickEscalations fires the duration-based escalations the synchronous engine
-// cannot wake itself for. The reaper calls it on a timer.
-func (m *Manager) TickEscalations(ctx context.Context, now time.Time) error {
-	type due struct {
-		id         domain.SessionID
-		project    domain.ProjectID
-		key        reactionKey
-		attempts   int
-		durationMs int64
-	}
-	var fire []due
-	m.react.mu.Lock()
-	for k, t := range m.react.trackers {
-		if t.escalated {
-			continue
-		}
-		cfg := reactions[k.key]
-		if cfg.escalateAfter > 0 && !t.firstAt.IsZero() && now.Sub(t.firstAt) >= cfg.escalateAfter {
-			t.escalated = true
-			fire = append(fire, due{k.id, t.projectID, k.key, t.attempts, now.Sub(t.firstAt).Milliseconds()})
-		}
-	}
-	m.react.mu.Unlock()
-
-	for _, d := range fire {
-		if err := m.escalate(ctx, d.id, d.project, d.key, ports.EscalationEvent{Attempts: d.attempts, Cause: "max_duration", DurationMs: d.durationMs}); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func allFailed(statuses []domain.PRCheckStatus, n int) bool {
@@ -389,7 +285,7 @@ func allFailed(statuses []domain.PRCheckStatus, n int) bool {
 		return false
 	}
 	for i := 0; i < n; i++ {
-		if statuses[i] != "failed" {
+		if statuses[i] != domain.PRCheckFailed {
 			return false
 		}
 	}

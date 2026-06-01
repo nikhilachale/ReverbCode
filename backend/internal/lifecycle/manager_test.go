@@ -85,19 +85,6 @@ func (f *fakeStore) RecentCheckStatuses(_ context.Context, url, name string, lim
 	return out, nil
 }
 
-type fakeNotifier struct{ events []ports.Event }
-
-func (f *fakeNotifier) Notify(_ context.Context, e ports.Event) error {
-	f.events = append(f.events, e)
-	return nil
-}
-func (f *fakeNotifier) last() string {
-	if len(f.events) == 0 {
-		return ""
-	}
-	return f.events[len(f.events)-1].Type
-}
-
 type fakeMessenger struct{ msgs []string }
 
 func (f *fakeMessenger) Send(_ context.Context, _ domain.SessionID, m string) error {
@@ -105,9 +92,9 @@ func (f *fakeMessenger) Send(_ context.Context, _ domain.SessionID, m string) er
 	return nil
 }
 
-func newManager() (*Manager, *fakeStore, *fakeNotifier, *fakeMessenger) {
-	st, n, msg := newFakeStore(), &fakeNotifier{}, &fakeMessenger{}
-	return New(st, st, n, msg), st, n, msg
+func newManager() (*Manager, *fakeStore, *fakeMessenger) {
+	st, msg := newFakeStore(), &fakeMessenger{}
+	return New(st, st, msg), st, msg
 }
 
 func working(id domain.SessionID) domain.SessionRecord {
@@ -120,7 +107,7 @@ func openPR(o ports.PRObservation) ports.PRObservation {
 }
 
 func TestRuntimeObservation_InferredDeathSetsTerminated(t *testing.T) {
-	m, st, _, _ := newManager()
+	m, st, _ := newManager()
 	rec := working("mer-1")
 	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
 	st.sessions["mer-1"] = rec
@@ -134,7 +121,7 @@ func TestRuntimeObservation_InferredDeathSetsTerminated(t *testing.T) {
 }
 
 func TestRuntimeObservation_FailedProbeDoesNotMutate(t *testing.T) {
-	m, st, _, _ := newManager()
+	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")
 	before := st.sessions["mer-1"]
 	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Runtime: ports.ProbeFailed, Process: ports.ProbeFailed}); err != nil {
@@ -145,22 +132,8 @@ func TestRuntimeObservation_FailedProbeDoesNotMutate(t *testing.T) {
 	}
 }
 
-func TestActivity_WaitingInputPagesHuman(t *testing.T) {
-	m, st, n, _ := newManager()
-	st.sessions["mer-1"] = working("mer-1")
-	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput, Timestamp: time.Now()}); err != nil {
-		t.Fatal(err)
-	}
-	if st.sessions["mer-1"].Activity.State != domain.ActivityWaitingInput {
-		t.Fatalf("want waiting_input, got %+v", st.sessions["mer-1"].Activity)
-	}
-	if n.last() != "reaction.agent-needs-input" {
-		t.Fatalf("want needs-input notify, got %q", n.last())
-	}
-}
-
 func TestActivity_InvalidIsIgnored(t *testing.T) {
-	m, st, _, _ := newManager()
+	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")
 	before := st.sessions["mer-1"]
 	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: false, State: domain.ActivityIdle}); err != nil {
@@ -172,7 +145,7 @@ func TestActivity_InvalidIsIgnored(t *testing.T) {
 }
 
 func TestPR_CIFailingNudgesAgentWithLogs(t *testing.T) {
-	m, st, _, msg := newManager()
+	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
 	o := openPR(ports.PRObservation{CI: domain.CIFailing, Checks: []domain.PRCheckRow{{Name: "build", CommitHash: "c1", Status: "failed", LogTail: "boom"}}})
 	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
@@ -183,25 +156,8 @@ func TestPR_CIFailingNudgesAgentWithLogs(t *testing.T) {
 	}
 }
 
-func TestPR_CIBrakeEscalatesAfterThreeFails(t *testing.T) {
-	m, st, n, msg := newManager()
-	st.sessions["mer-1"] = working("mer-1")
-	for _, commit := range []string{"c1", "c2", "c3"} {
-		o := openPR(ports.PRObservation{CI: domain.CIFailing, Checks: []domain.PRCheckRow{{Name: "build", CommitHash: commit, Status: "failed", LogTail: "boom"}}})
-		if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if len(msg.msgs) != 2 {
-		t.Fatalf("want 2 nudges then escalate, got %d", len(msg.msgs))
-	}
-	if n.last() != "reaction.escalated" {
-		t.Fatalf("3rd failure should escalate, got %q", n.last())
-	}
-}
-
 func TestPR_ReviewCommentsInjectedRegardlessOfAuthor(t *testing.T) {
-	m, st, _, msg := newManager()
+	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
 	o := openPR(ports.PRObservation{Review: domain.ReviewChangesRequest, Comments: []domain.PRComment{{ID: "1", Author: "greptileai", Body: "use a constant here"}}})
 	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
@@ -212,20 +168,8 @@ func TestPR_ReviewCommentsInjectedRegardlessOfAuthor(t *testing.T) {
 	}
 }
 
-func TestPR_ApprovedAndGreenNotifies(t *testing.T) {
-	m, st, n, _ := newManager()
-	st.sessions["mer-1"] = working("mer-1")
-	o := openPR(ports.PRObservation{Review: domain.ReviewApproved, Mergeability: domain.MergeMergeable})
-	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
-		t.Fatal(err)
-	}
-	if n.last() != "reaction.approved-and-green" {
-		t.Fatalf("want approved-and-green, got %q", n.last())
-	}
-}
-
 func TestPR_MergeTerminatesSession(t *testing.T) {
-	m, st, n, _ := newManager()
+	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")
 	if err := m.ApplyPRObservation(ctx, "mer-1", openPR(ports.PRObservation{Merged: true})); err != nil {
 		t.Fatal(err)
@@ -234,13 +178,10 @@ func TestPR_MergeTerminatesSession(t *testing.T) {
 	if !got.IsTerminated {
 		t.Fatalf("merge should terminate, got %+v", got)
 	}
-	if n.last() != "reaction.pr-merged" {
-		t.Fatalf("want pr-merged notify, got %q", n.last())
-	}
 }
 
 func TestPR_FailedFetchIsDropped(t *testing.T) {
-	m, st, _, msg := newManager()
+	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
 	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: false, CI: domain.CIFailing}); err != nil {
 		t.Fatal(err)
@@ -251,7 +192,7 @@ func TestPR_FailedFetchIsDropped(t *testing.T) {
 }
 
 func TestKill_TerminatesWithoutReacting(t *testing.T) {
-	m, st, n, _ := newManager()
+	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")
 	if err := m.OnKillRequested(ctx, "mer-1"); err != nil {
 		t.Fatal(err)
@@ -259,32 +200,10 @@ func TestKill_TerminatesWithoutReacting(t *testing.T) {
 	if !st.sessions["mer-1"].IsTerminated {
 		t.Fatalf("want terminated, got %+v", st.sessions["mer-1"])
 	}
-	if len(n.events) != 0 {
-		t.Fatal("explicit kill must not notify")
-	}
-}
-
-func TestTickEscalations_DurationPagesHuman(t *testing.T) {
-	m, st, n, msg := newManager()
-	now := time.Now()
-	m.clock = func() time.Time { return now }
-	st.sessions["mer-1"] = working("mer-1")
-	if err := m.ApplyPRObservation(ctx, "mer-1", openPR(ports.PRObservation{Mergeability: domain.MergeConflicting})); err != nil {
-		t.Fatal(err)
-	}
-	if len(msg.msgs) != 1 {
-		t.Fatalf("merge-conflict should nudge once, got %d", len(msg.msgs))
-	}
-	if err := m.TickEscalations(ctx, now.Add(16*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	if n.last() != "reaction.escalated" {
-		t.Fatalf("unaddressed conflict should escalate, got %q", n.last())
-	}
 }
 
 func TestRunningSessions_ExcludesTerminated(t *testing.T) {
-	m, st, _, _ := newManager()
+	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")
 	dead := working("mer-2")
 	dead.IsTerminated = true

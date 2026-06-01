@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"testing"
-	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -15,9 +14,8 @@ import (
 var ctx = context.Background()
 
 type fakeLCM struct {
-	running   []domain.SessionRecord
-	observed  map[domain.SessionID]ports.RuntimeFacts
-	escalated int
+	running  []domain.SessionRecord
+	observed map[domain.SessionID]ports.RuntimeFacts
 }
 
 func (l *fakeLCM) RunningSessions(context.Context) ([]domain.SessionRecord, error) {
@@ -30,7 +28,6 @@ func (l *fakeLCM) ApplyRuntimeObservation(_ context.Context, id domain.SessionID
 	l.observed[id] = f
 	return nil
 }
-func (l *fakeLCM) TickEscalations(context.Context, time.Time) error { l.escalated++; return nil }
 func (l *fakeLCM) ApplyActivitySignal(context.Context, domain.SessionID, ports.ActivitySignal) error {
 	return nil
 }
@@ -88,16 +85,6 @@ func TestTick_ReportsProbeErrorAsFailed(t *testing.T) {
 	}
 	if lcm.observed["mer-1"].Runtime != ports.ProbeFailed {
 		t.Fatalf("probe error must be reported as failed, got %q", lcm.observed["mer-1"].Runtime)
-	}
-}
-
-func TestTick_FiresEscalationHeartbeat(t *testing.T) {
-	lcm := &fakeLCM{}
-	if err := newReaper(lcm, fakeRuntime{}).Tick(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if lcm.escalated != 1 {
-		t.Fatalf("tick must drive TickEscalations once, got %d", lcm.escalated)
 	}
 }
 

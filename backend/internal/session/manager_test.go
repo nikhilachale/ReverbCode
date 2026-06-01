@@ -86,7 +86,6 @@ func (l *fakeLCM) ApplyActivitySignal(context.Context, domain.SessionID, ports.A
 func (l *fakeLCM) ApplyPRObservation(context.Context, domain.SessionID, ports.PRObservation) error {
 	return nil
 }
-func (l *fakeLCM) TickEscalations(context.Context, time.Time) error                { return nil }
 func (l *fakeLCM) RunningSessions(context.Context) ([]domain.SessionRecord, error) { return nil, nil }
 
 type fakeRuntime struct {
