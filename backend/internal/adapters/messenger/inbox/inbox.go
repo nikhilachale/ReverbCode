@@ -67,7 +67,7 @@ func (m *Messenger) Send(ctx context.Context, id domain.SessionID, message strin
 	}
 
 	name := filenameFor(m.clock(), message)
-	if err := os.WriteFile(filepath.Join(inboxDir, name), []byte(message), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(inboxDir, name), []byte(message), 0o600); err != nil {
 		return fmt.Errorf("inbox: write %s for %s: %w", name, id, err)
 	}
 	return nil
@@ -94,7 +94,7 @@ func ensureRealDir(path string) error {
 		}
 		return nil
 	case errors.Is(err, os.ErrNotExist):
-		return os.MkdirAll(path, 0o755)
+		return os.MkdirAll(path, 0o750)
 	default:
 		return err
 	}

@@ -57,7 +57,7 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg agent.WorkspaceHookConfi
 	rawHooks := map[string]json.RawMessage{}
 
 	if existingData, err := os.ReadFile(hooksPath); err == nil {
-		if len(strings.TrimSpace(string(existingData))) > 0 {
+		if strings.TrimSpace(string(existingData)) != "" {
 			if err := json.Unmarshal(existingData, &topLevel); err != nil {
 				return fmt.Errorf("codex.GetAgentHooks: parse %s: %w", hooksPath, err)
 			}
@@ -199,7 +199,7 @@ func ensureCodexHooksFeatureEnabled(workspacePath string) error {
 	case strings.Contains(content, "[features]"):
 		content = strings.Replace(content, "[features]", "[features]\n"+codexHooksFeatureLine, 1)
 	default:
-		if len(content) > 0 && !strings.HasSuffix(content, "\n") {
+		if content != "" && !strings.HasSuffix(content, "\n") {
 			content += "\n"
 		}
 		content += "\n[features]\n" + codexHooksFeatureLine + "\n"
@@ -214,7 +214,7 @@ func ensureCodexHooksFeatureEnabled(workspacePath string) error {
 	return nil
 }
 
-func containsCodexFeatureLine(content string, line string) bool {
+func containsCodexFeatureLine(content, line string) bool {
 	for raw := range strings.SplitSeq(content, "\n") {
 		if strings.TrimSpace(raw) == line {
 			return true

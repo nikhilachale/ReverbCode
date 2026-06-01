@@ -88,23 +88,28 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// writeSpawnError maps an SM-returned error to the right HTTP status. A
-// project.Error in the chain (most commonly "unknown project" from the
-// projectresolver) becomes 404; anything else surfaces as 500 SPAWN_FAILED.
+// writeSpawnError maps an SM-returned error to the right HTTP status.
+//
+// A *project.Error in the chain with a client-flavoured Kind ("bad_request",
+// "not_found", "conflict") is surfaced verbatim — those are safe to show. Any
+// other Kind ("internal", "not_implemented", or anything unknown) falls through
+// to the generic 500 SPAWN_FAILED envelope rather than passing the project
+// error's Code/Message back to the client, which may carry internal detail
+// (store paths, schema versions, etc.) we don't want to leak.
 func writeSpawnError(w http.ResponseWriter, r *http.Request, err error) {
 	var pe *project.Error
 	if errors.As(err, &pe) {
-		status := http.StatusInternalServerError
 		switch pe.Kind {
 		case "bad_request":
-			status = http.StatusBadRequest
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, pe.Kind, pe.Code, pe.Message, pe.Details)
+			return
 		case "not_found":
-			status = http.StatusNotFound
+			envelope.WriteAPIError(w, r, http.StatusNotFound, pe.Kind, pe.Code, pe.Message, pe.Details)
+			return
 		case "conflict":
-			status = http.StatusConflict
+			envelope.WriteAPIError(w, r, http.StatusConflict, pe.Kind, pe.Code, pe.Message, pe.Details)
+			return
 		}
-		envelope.WriteAPIError(w, r, status, pe.Kind, pe.Code, pe.Message, pe.Details)
-		return
 	}
 	envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "SPAWN_FAILED", "Failed to spawn session", nil)
 }

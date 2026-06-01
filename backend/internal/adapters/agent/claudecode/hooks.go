@@ -61,7 +61,7 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg agent.WorkspaceHookConfi
 	rawHooks := map[string]json.RawMessage{}
 
 	if existingData, err := os.ReadFile(settingsPath); err == nil {
-		if len(strings.TrimSpace(string(existingData))) > 0 {
+		if strings.TrimSpace(string(existingData)) != "" {
 			if err := json.Unmarshal(existingData, &topLevel); err != nil {
 				return fmt.Errorf("claude-code.GetAgentHooks: parse %s: %w", settingsPath, err)
 			}

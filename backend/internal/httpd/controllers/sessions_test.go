@@ -191,3 +191,32 @@ func TestSessionsAPI_Spawn_InternalFailure(t *testing.T) {
 		`{"projectId":"demo","prompt":"x"}`)
 	assertErrorCode(t, body, status, http.StatusInternalServerError, "SPAWN_FAILED")
 }
+
+// TestSessionsAPI_Spawn_InternalKindIsOpaque verifies that a *project.Error
+// with a non-client Kind (e.g. "internal" or "not_implemented") does not leak
+// its Code/Message verbatim — those flavoured project errors should fall
+// through to the generic SPAWN_FAILED envelope, same as any other 500.
+func TestSessionsAPI_Spawn_InternalKindIsOpaque(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{name: "internal kind", err: &project.Error{Kind: "internal", Code: "PROJECT_STORE_CORRUPT", Message: "store file checksum mismatch"}},
+		{name: "not_implemented kind", err: &project.Error{Kind: "not_implemented", Code: "PROJECT_CONFIG_NOT_IMPLEMENTED", Message: "Project config patching is not available"}},
+		{name: "unknown kind", err: &project.Error{Kind: "weird", Code: "WEIRD_INTERNAL_THING", Message: "internal-only message"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := sessionsServer(t, &fakeSpawner{err: tc.err})
+			body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions",
+				`{"projectId":"demo","prompt":"x"}`)
+			assertErrorCode(t, body, status, http.StatusInternalServerError, "SPAWN_FAILED")
+			// And confirm the project.Error's internal Message/Code didn't slip into the body.
+			var got errorBody
+			mustJSON(t, body, &got)
+			if got.Message != "Failed to spawn session" {
+				t.Fatalf("internal message leaked into response: %q", got.Message)
+			}
+		})
+	}
+}
