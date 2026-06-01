@@ -13,6 +13,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemonmeta"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
 
@@ -85,13 +86,13 @@ func mountControl(r chi.Router, deps ControlDeps) {
 	}
 	r.Post("/shutdown", func(w http.ResponseWriter, req *http.Request) {
 		if !localControlRequest(req) {
-			writeJSON(w, http.StatusForbidden, map[string]any{
+			envelope.WriteJSON(w, http.StatusForbidden, map[string]any{
 				"status":  "forbidden",
 				"service": daemonmeta.ServiceName,
 			})
 			return
 		}
-		writeJSON(w, http.StatusAccepted, map[string]any{
+		envelope.WriteJSON(w, http.StatusAccepted, map[string]any{
 			"status":  "shutting_down",
 			"service": daemonmeta.ServiceName,
 			"pid":     os.Getpid(),
@@ -126,7 +127,7 @@ func localControlRequest(r *http.Request) bool {
 // handleHealthz is the liveness probe: it answers 200 as long as the process is
 // up and serving. It does no dependency checks by design.
 func handleHealthz(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
+	envelope.WriteJSON(w, http.StatusOK, map[string]any{
 		"status":  "ok",
 		"service": daemonmeta.ServiceName,
 		"pid":     os.Getpid(),
@@ -136,7 +137,7 @@ func handleHealthz(w http.ResponseWriter, _ *http.Request) {
 // handleReadyz is the readiness probe. Dependency initialization happens before
 // the server is constructed, so a listening daemon is ready to answer requests.
 func handleReadyz(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
+	envelope.WriteJSON(w, http.StatusOK, map[string]any{
 		"status":  "ready",
 		"service": daemonmeta.ServiceName,
 		"pid":     os.Getpid(),

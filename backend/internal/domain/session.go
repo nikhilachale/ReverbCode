@@ -32,9 +32,6 @@ type SessionMetadata struct {
 	Prompt          string `json:"prompt,omitempty"`
 }
 
-// IsZero reports whether no optional session metadata has been recorded.
-func (m SessionMetadata) IsZero() bool { return m == SessionMetadata{} }
-
 // SessionRecord is the persistence shape. It intentionally stores only durable
 // facts: identity, agent harness, activity_state, is_terminated, and operational
 // metadata. The user-facing Status is derived from these facts plus PR facts.

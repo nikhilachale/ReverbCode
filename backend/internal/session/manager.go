@@ -35,7 +35,6 @@ type lifecycleRecorder interface {
 type sessionStore interface {
 	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
-	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
 	ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
 }

@@ -8,7 +8,7 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	// Clear every recognised var so we observe pure defaults regardless of the
 	// surrounding environment.
-	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE"} {
+	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR"} {
 		t.Setenv(k, "")
 	}
 
@@ -31,6 +31,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.RunFilePath == "" {
 		t.Error("RunFilePath is empty, want a resolved default path")
 	}
+	if cfg.DataDir == "" {
+		t.Error("DataDir is empty, want a resolved default path")
+	}
 }
 
 func TestLoadOverrides(t *testing.T) {
@@ -38,6 +41,7 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("AO_REQUEST_TIMEOUT", "5s")
 	t.Setenv("AO_SHUTDOWN_TIMEOUT", "3s")
 	t.Setenv("AO_RUN_FILE", "/tmp/ao-test-running.json")
+	t.Setenv("AO_DATA_DIR", "/tmp/ao-test-data")
 
 	cfg, err := Load()
 	if err != nil {
@@ -54,6 +58,9 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.RunFilePath != "/tmp/ao-test-running.json" {
 		t.Errorf("RunFilePath = %q, want /tmp/ao-test-running.json", cfg.RunFilePath)
+	}
+	if cfg.DataDir != "/tmp/ao-test-data" {
+		t.Errorf("DataDir = %q, want /tmp/ao-test-data", cfg.DataDir)
 	}
 }
 

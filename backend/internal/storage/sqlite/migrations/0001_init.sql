@@ -29,7 +29,7 @@ CREATE TABLE sessions (
         CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode')),
 
     activity_state          TEXT NOT NULL DEFAULT 'idle'
-        CHECK (activity_state IN ('active', 'ready', 'idle', 'waiting_input', 'blocked', 'exited')),
+        CHECK (activity_state IN ('active', 'idle', 'waiting_input', 'blocked', 'exited')),
     activity_last_at        TIMESTAMP NOT NULL,
     activity_source         TEXT NOT NULL DEFAULT 'none'
         CHECK (activity_source IN ('native', 'terminal', 'hook', 'runtime', 'none')),
@@ -106,8 +106,9 @@ CREATE TABLE change_log (
     seq        INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id TEXT NOT NULL REFERENCES projects (id),
     session_id TEXT REFERENCES sessions (id),
-    event_type TEXT NOT NULL,
-    payload    TEXT NOT NULL,
+    event_type TEXT NOT NULL
+        CHECK (event_type IN ('session_created', 'session_updated', 'pr_created', 'pr_updated', 'pr_check_recorded')),
+    payload    TEXT NOT NULL CHECK (json_valid(payload)),
     created_at TIMESTAMP NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX idx_change_log_project ON change_log (project_id, seq);
@@ -124,7 +125,7 @@ AFTER INSERT ON sessions
 BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
     VALUES (NEW.project_id, NEW.id, 'session_created',
-        json_object('id', NEW.id, 'activity', NEW.activity_state, 'isTerminated', NEW.is_terminated),
+        json_object('id', NEW.id, 'activity', NEW.activity_state, 'isTerminated', json(CASE WHEN NEW.is_terminated THEN 'true' ELSE 'false' END)),
         NEW.updated_at);
 END;
 -- +goose StatementEnd
@@ -137,7 +138,7 @@ WHEN OLD.activity_state <> NEW.activity_state
 BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
     VALUES (NEW.project_id, NEW.id, 'session_updated',
-        json_object('id', NEW.id, 'activity', NEW.activity_state, 'isTerminated', NEW.is_terminated),
+        json_object('id', NEW.id, 'activity', NEW.activity_state, 'isTerminated', json(CASE WHEN NEW.is_terminated THEN 'true' ELSE 'false' END)),
         NEW.updated_at);
 END;
 -- +goose StatementEnd
@@ -199,7 +200,7 @@ BEGIN
         (SELECT session_id FROM pr WHERE url = NEW.pr_url),
         'pr_check_recorded',
         json_object('pr', NEW.pr_url, 'name', NEW.name, 'commit', NEW.commit_hash, 'status', NEW.status),
-        NEW.created_at);
+        datetime('now'));
 END;
 -- +goose StatementEnd
 

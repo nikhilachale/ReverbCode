@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -197,6 +198,13 @@ func TestCDCTriggersPopulateChangeLog(t *testing.T) {
 	want := []string{"session_created", "session_updated", "pr_created"}
 	if len(types) != 3 || types[0] != want[0] || types[1] != want[1] || types[2] != want[2] {
 		t.Fatalf("change_log event types = %v, want %v (metadata-only update suppressed)", types, want)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(evs[0].Payload), &payload); err != nil {
+		t.Fatalf("session payload JSON: %v", err)
+	}
+	if _, ok := payload["isTerminated"].(bool); !ok {
+		t.Fatalf("isTerminated payload type = %T, want bool", payload["isTerminated"])
 	}
 	maxSeq, _ := s.MaxChangeLogSeq(ctx)
 	if maxSeq != int64(len(evs)) {

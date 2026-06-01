@@ -114,7 +114,6 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 
 	checks = append(checks,
 		c.checkTool("git", true),
-
 		c.checkTool("zellij", false),
 	)
 	return checks

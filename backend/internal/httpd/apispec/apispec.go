@@ -16,7 +16,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	yaml "gopkg.in/yaml.v3"
 )
@@ -115,9 +114,7 @@ type notImplementedResponse struct {
 }
 
 // NotImplemented writes the locked 501 envelope, embedding the OpenAPI
-// Operation slice that documents what this route WILL do. Replaces the
-// throwaway PlannedRoute literals that the first cut of the route shell
-// duplicated in controller code.
+// Operation slice for the capability that is currently unavailable.
 func NotImplemented(w http.ResponseWriter, r *http.Request, method, path string) {
 	op := Default().Operation(method, path)
 	if op == nil {
@@ -126,7 +123,7 @@ func NotImplemented(w http.ResponseWriter, r *http.Request, method, path string)
 	body := notImplementedResponse{
 		Error:     "not_implemented",
 		Code:      "NOT_IMPLEMENTED",
-		Message:   method + " " + path + " is registered but not yet implemented",
+		Message:   method + " " + path + " is unavailable in this daemon",
 		RequestID: middleware.GetReqID(r.Context()),
 		Spec:      op,
 	}
@@ -141,11 +138,4 @@ func NotImplemented(w http.ResponseWriter, r *http.Request, method, path string)
 func ServeYAML(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
 	_, _ = w.Write(openapiYAML)
-}
-
-// RegisterServe mounts ServeYAML on the supplied router. Kept as a
-// helper so the router code only references one symbol from apispec
-// for the static serve path.
-func RegisterServe(r chi.Router, path string) {
-	r.Get(path, ServeYAML)
 }

@@ -99,8 +99,12 @@ func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, key, sig, m
 		m.react.mu.Unlock()
 		return nil
 	}
+	if err := m.messenger.Send(ctx, id, msg); err != nil {
+		m.react.mu.Unlock()
+		return err
+	}
 	m.react.seen[key] = sig
 	m.react.attempts[key] = attempts + 1
 	m.react.mu.Unlock()
-	return m.messenger.Send(ctx, id, msg)
+	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/project"
 )
 
@@ -39,8 +40,8 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 	}
 }
 
-// Register mounts the bounded /api/v1 REST surface. Long-lived surfaces such as
-// SSE and muxed terminal streams stay outside this timeout group.
+// Register mounts the bounded /api/v1 REST surface. Long-lived surfaces such
+// as muxed terminal streams stay outside this timeout group.
 func (a *API) Register(root chi.Router) {
 	timeout := a.cfg.RequestTimeout
 	if timeout <= 0 {
@@ -49,7 +50,7 @@ func (a *API) Register(root chi.Router) {
 
 	root.Route("/api/v1", func(r chi.Router) {
 		// Serve the OpenAPI document from the same origin as the routes it describes.
-		apispec.RegisterServe(r, "/openapi.yaml")
+		r.Get("/openapi.yaml", apispec.ServeYAML)
 
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Timeout(timeout))
@@ -64,7 +65,7 @@ func (a *API) Register(root chi.Router) {
 // 404 is a text/plain body; the API surface must answer JSON so consumers can
 // parse it uniformly.
 func notFoundJSON(w http.ResponseWriter, r *http.Request) {
-	writeAPIError(w, r, http.StatusNotFound, "not_found", "ROUTE_NOT_FOUND",
+	envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "ROUTE_NOT_FOUND",
 		r.Method+" "+r.URL.Path+" has no handler", nil)
 }
 
@@ -72,6 +73,6 @@ func notFoundJSON(w http.ResponseWriter, r *http.Request) {
 // known path without a matching verb (e.g. PUT /projects/{id} after we drop
 // the legacy PUT alias).
 func methodNotAllowedJSON(w http.ResponseWriter, r *http.Request) {
-	writeAPIError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "METHOD_NOT_ALLOWED",
+	envelope.WriteAPIError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "METHOD_NOT_ALLOWED",
 		r.Method+" not allowed on "+r.URL.Path, nil)
 }

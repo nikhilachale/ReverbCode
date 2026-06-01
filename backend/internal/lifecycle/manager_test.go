@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -60,9 +61,15 @@ func (f *fakeStore) ListPRFactsForSession(_ context.Context, id domain.SessionID
 	return nil, nil
 }
 
-type fakeMessenger struct{ msgs []string }
+type fakeMessenger struct {
+	msgs []string
+	err  error
+}
 
 func (f *fakeMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {
+	if f.err != nil {
+		return f.err
+	}
 	f.msgs = append(f.msgs, msg)
 	return nil
 }
@@ -160,7 +167,7 @@ func TestMarkSpawnedStoresRuntimeMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := st.sessions["mer-1"]
-	if got.IsTerminated || got.Activity.State != domain.ActivityReady || got.Metadata.RuntimeHandleID != "h1" {
+	if got.IsTerminated || got.Activity.State != domain.ActivityIdle || got.Metadata.RuntimeHandleID != "h1" {
 		t.Fatalf("spawn metadata wrong: %+v", got)
 	}
 }
@@ -198,5 +205,22 @@ func TestPRObservation_MergeConflictNudgesAgent(t *testing.T) {
 	}
 	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "merge conflicts") {
 		t.Fatalf("want merge-conflict nudge, got %v", msg.msgs)
+	}
+}
+
+func TestPRObservation_RetriesAfterMessengerFailure(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeConflicting}
+	msg.err = errors.New("temporary send failure")
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err == nil {
+		t.Fatal("want send error")
+	}
+	msg.err = nil
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want retry to send once, got %v", msg.msgs)
 	}
 }

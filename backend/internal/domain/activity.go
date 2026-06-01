@@ -8,7 +8,6 @@ type ActivityState string
 // Activity states. WaitingInput and Blocked are sticky (see IsSticky).
 const (
 	ActivityActive       ActivityState = "active"
-	ActivityReady        ActivityState = "ready"
 	ActivityIdle         ActivityState = "idle"
 	ActivityWaitingInput ActivityState = "waiting_input"
 	ActivityBlocked      ActivityState = "blocked"

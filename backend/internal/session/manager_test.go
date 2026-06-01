@@ -68,7 +68,7 @@ func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, o ports.Sp
 	l.completed++
 	rec := l.store.sessions[id]
 	rec.IsTerminated = false
-	rec.Activity = domain.ActivitySubstate{State: domain.ActivityReady, LastActivityAt: time.Now(), Source: domain.SourceRuntime}
+	rec.Activity = domain.ActivitySubstate{State: domain.ActivityIdle, LastActivityAt: time.Now(), Source: domain.SourceRuntime}
 	rec.Metadata = domain.SessionMetadata{Branch: o.Branch, WorkspacePath: o.WorkspacePath, RuntimeHandleID: o.RuntimeHandle.ID, AgentSessionID: o.AgentSessionID, Prompt: o.Prompt}
 	l.store.sessions[id] = rec
 	return nil

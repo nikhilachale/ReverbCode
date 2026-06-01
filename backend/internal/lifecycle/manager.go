@@ -57,7 +57,7 @@ func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domai
 }
 
 // ApplyRuntimeObservation only writes when runtime liveness is unambiguous. A
-// failed/unknown probe or disagreement is ignored; no transient lifecycle state is stored.
+// failed probe or liveness disagreement is ignored; no transient lifecycle state is stored.
 func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f ports.RuntimeFacts) error {
 	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
 		if cur.IsTerminated || !runtimeClearlyDead(f, cur.Activity, now, m.window) {
@@ -108,7 +108,7 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, o ports.
 	}
 	now := m.clock()
 	rec.IsTerminated = false
-	rec.Activity = domain.ActivitySubstate{State: domain.ActivityReady, LastActivityAt: now, Source: domain.SourceRuntime}
+	rec.Activity = domain.ActivitySubstate{State: domain.ActivityIdle, LastActivityAt: now, Source: domain.SourceRuntime}
 	rec.Metadata = mergeMetadata(rec.Metadata, spawnMetadata(o))
 	rec.UpdatedAt = now
 	return m.store.UpdateSession(ctx, rec)
