@@ -1,7 +1,8 @@
 // Package cdc is the change-data-capture delivery layer. Change events are
 // captured durably by SQLite triggers into the change_log table (see the storage
 // migrations); this package POLLS that log and fans new events out, in order, to
-// in-process subscribers (the WS/SSE transport, wired in the frontend task).
+// in-process subscribers such as terminal session-state fan-out. Future SSE/event
+// endpoints can subscribe here too.
 //
 // There is no durable outbox/JSONL/janitor machinery: the change_log table IS
 // the durable, ordered source of truth, and clients catch up by reading it from

@@ -31,8 +31,8 @@ AO_PORT=3019 go run ./cmd/ao start # override per invocation
 Health check:
 
 ```bash
-curl localhost:3001/healthz       # {"status":"ok"}
-curl localhost:3001/readyz        # {"status":"ready"}
+curl localhost:3001/healthz       # includes status/service/pid
+curl localhost:3001/readyz        # includes status/service/pid
 ```
 
 ### Configuration (env only)

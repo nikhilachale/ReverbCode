@@ -44,8 +44,8 @@ type Config struct {
 	// RunFilePath is where the PID + port handshake file (running.json) is
 	// written so the Electron supervisor can discover and reap the daemon.
 	RunFilePath string
-	// DataDir is the directory holding durable state: SQLite database, WAL files,
-	// and managed worktrees. It is created on first use by the storage layer.
+	// DataDir is the directory holding durable SQLite state: DB and WAL files.
+	// It is created on first use by the storage layer.
 	DataDir string
 }
 

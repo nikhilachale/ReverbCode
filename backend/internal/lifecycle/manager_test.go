@@ -178,6 +178,21 @@ func TestPRObservation_MergeConflictNudgesAgent(t *testing.T) {
 	}
 }
 
+func TestPRObservation_MergedTerminatesWithoutNudge(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Merged: true}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("merged PR should terminate session, got %+v", got)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("merged PR should not send nudge, got %v", msg.msgs)
+	}
+}
+
 func TestPRObservation_RetriesAfterMessengerFailure(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")

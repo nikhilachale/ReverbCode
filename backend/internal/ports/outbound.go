@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -12,7 +13,44 @@ type PRWriter interface {
 	// WritePR persists a full PR observation — scalar facts, check runs, and the
 	// replacement comment set — in one transaction, so the rows and the CDC
 	// events they emit are all-or-nothing.
-	WritePR(ctx context.Context, pr domain.PRRow, checks []domain.PRCheckRow, comments []domain.PRComment) error
+	WritePR(ctx context.Context, pr PRRow, checks []PRCheckRow, comments []PRComment) error
+}
+
+// PRRow is the scalar facts of one tracked pull request (the pr table). A
+// session can own several PRs; a PR belongs to one session.
+type PRRow struct {
+	URL          string
+	SessionID    domain.SessionID
+	Number       int
+	Draft        bool
+	Merged       bool
+	Closed       bool
+	CI           domain.CIState
+	Review       domain.ReviewDecision
+	Mergeability domain.Mergeability
+	UpdatedAt    time.Time
+}
+
+// PRCheckRow is one CI check run — one row per check name per commit.
+type PRCheckRow struct {
+	Name       string
+	CommitHash string
+	Status     domain.PRCheckStatus
+	URL        string
+	LogTail    string
+	CreatedAt  time.Time
+}
+
+// PRComment is one review comment. Feedback is injected into the agent
+// regardless of author, so there is no bot/human distinction.
+type PRComment struct {
+	ID        string
+	Author    string
+	File      string
+	Line      int
+	Body      string
+	Resolved  bool
+	CreatedAt time.Time
 }
 
 // AgentMessenger injects a message into a running agent.
@@ -22,7 +60,7 @@ type AgentMessenger interface {
 
 // ---- runtime / agent / workspace plugin ports (used by the Session Manager) ----
 
-// Runtime is where a session's agent process runs — currently a Zellij session.
+// Runtime is where a session's agent process runs.
 // The Session Manager creates one per session and tears it down.
 type Runtime interface {
 	Create(ctx context.Context, cfg RuntimeConfig) (RuntimeHandle, error)
@@ -38,7 +76,8 @@ type RuntimeConfig struct {
 	Env           map[string]string
 }
 
-// RuntimeHandle identifies a live runtime instance (a Zellij session/pane handle).
+// RuntimeHandle identifies a live runtime instance. Its ID is opaque outside
+// the concrete runtime adapter.
 type RuntimeHandle struct {
 	ID string
 }

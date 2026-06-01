@@ -3,7 +3,7 @@
 // WebSocket clients, alongside a session-state channel fed by the CDC
 // broadcaster.
 //
-// Boundaries (see docs/backend-code-structure.md):
+// Boundaries (see docs/architecture.md):
 //
 //   - This package owns the product workflow: PTY attach, output fan-out, a
 //     bounded replay buffer, re-attach resilience, and the ch-tagged wire

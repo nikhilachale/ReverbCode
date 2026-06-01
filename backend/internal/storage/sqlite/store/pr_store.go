@@ -11,8 +11,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
 )
 
-// The pr / pr_checks / pr_comment rows are modelled by domain.PRRow /
-// domain.PRCheckRow / domain.PRComment — flat tables, one shared type per table.
+// The pr / pr_checks / pr_comment rows are modelled by ports.PRRow /
+// ports.PRCheckRow / ports.PRComment — flat tables, one shared type per table.
 // This layer only maps those to/from the sqlc gen.* params: the bool PR flags
 // become the single pr.pr_state column, empty enums default to their
 // "nothing known yet" value (matching the CHECK constraints), and ints widen to
@@ -30,7 +30,7 @@ var (
 // change_log events their triggers emit are committed all-or-nothing. The scalar
 // PR upsert runs first so the checks'/comments' CDC triggers can resolve the
 // session id from the pr row within the same transaction.
-func (s *Store) WritePR(ctx context.Context, pr domain.PRRow, checks []domain.PRCheckRow, comments []domain.PRComment) error {
+func (s *Store) WritePR(ctx context.Context, pr ports.PRRow, checks []ports.PRCheckRow, comments []ports.PRComment) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.inTx(ctx, "write pr observation", func(q *gen.Queries) error {
@@ -45,7 +45,7 @@ func (s *Store) WritePR(ctx context.Context, pr domain.PRRow, checks []domain.PR
 			return err
 		}
 		for _, c := range checks {
-			if err := q.UpsertPRCheck(ctx, genCheckParams(c)); err != nil {
+			if err := q.UpsertPRCheck(ctx, genCheckParams(pr.URL, c)); err != nil {
 				return err
 			}
 		}
@@ -62,24 +62,24 @@ func (s *Store) WritePR(ctx context.Context, pr domain.PRRow, checks []domain.PR
 }
 
 // GetPR returns the PR facts for a URL, or ok=false if absent.
-func (s *Store) GetPR(ctx context.Context, url string) (domain.PRRow, bool, error) {
+func (s *Store) GetPR(ctx context.Context, url string) (ports.PRRow, bool, error) {
 	p, err := s.qr.GetPR(ctx, url)
 	if errors.Is(err, sql.ErrNoRows) {
-		return domain.PRRow{}, false, nil
+		return ports.PRRow{}, false, nil
 	}
 	if err != nil {
-		return domain.PRRow{}, false, fmt.Errorf("get pr %s: %w", url, err)
+		return ports.PRRow{}, false, fmt.Errorf("get pr %s: %w", url, err)
 	}
 	return prRowFromGen(p), true, nil
 }
 
 // ListPRsBySession returns every PR owned by a session, newest first.
-func (s *Store) ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PRRow, error) {
+func (s *Store) ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]ports.PRRow, error) {
 	rows, err := s.qr.ListPRsBySession(ctx, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("list prs for %s: %w", sessionID, err)
 	}
-	out := make([]domain.PRRow, 0, len(rows))
+	out := make([]ports.PRRow, 0, len(rows))
 	for _, p := range rows {
 		out = append(out, prRowFromGen(p))
 	}
@@ -87,12 +87,12 @@ func (s *Store) ListPRsBySession(ctx context.Context, sessionID domain.SessionID
 }
 
 // ListChecks returns every recorded check run for a PR.
-func (s *Store) ListChecks(ctx context.Context, prURL string) ([]domain.PRCheckRow, error) {
+func (s *Store) ListChecks(ctx context.Context, prURL string) ([]ports.PRCheckRow, error) {
 	rows, err := s.qr.ListChecksByPR(ctx, prURL)
 	if err != nil {
 		return nil, fmt.Errorf("list checks %s: %w", prURL, err)
 	}
-	out := make([]domain.PRCheckRow, 0, len(rows))
+	out := make([]ports.PRCheckRow, 0, len(rows))
 	for _, c := range rows {
 		out = append(out, checkRowFromGen(c))
 	}
@@ -100,12 +100,12 @@ func (s *Store) ListChecks(ctx context.Context, prURL string) ([]domain.PRCheckR
 }
 
 // ListPRComments returns a PR's review comments, oldest first.
-func (s *Store) ListPRComments(ctx context.Context, prURL string) ([]domain.PRComment, error) {
+func (s *Store) ListPRComments(ctx context.Context, prURL string) ([]ports.PRComment, error) {
 	rows, err := s.qr.ListPRComments(ctx, prURL)
 	if err != nil {
 		return nil, fmt.Errorf("list pr comments %s: %w", prURL, err)
 	}
-	out := make([]domain.PRComment, 0, len(rows))
+	out := make([]ports.PRComment, 0, len(rows))
 	for _, c := range rows {
 		out = append(out, commentFromGen(c))
 	}
@@ -115,7 +115,7 @@ func (s *Store) ListPRComments(ctx context.Context, prURL string) ([]domain.PRCo
 // ---- domain <-> gen mapping ----
 
 // prState collapses the PR's bools into the single pr.state column value.
-func prState(r domain.PRRow) domain.PRState {
+func prState(r ports.PRRow) domain.PRState {
 	switch {
 	case r.Merged:
 		return domain.PRStateMerged
@@ -128,7 +128,7 @@ func prState(r domain.PRRow) domain.PRState {
 	}
 }
 
-func genPRParams(r domain.PRRow) gen.UpsertPRParams {
+func genPRParams(r ports.PRRow) gen.UpsertPRParams {
 	return gen.UpsertPRParams{
 		Url:            r.URL,
 		SessionID:      r.SessionID,
@@ -162,8 +162,8 @@ func mergeabilityOrDefault(v domain.Mergeability) domain.Mergeability {
 	return v
 }
 
-func prRowFromGen(p gen.Pr) domain.PRRow {
-	return domain.PRRow{
+func prRowFromGen(p gen.Pr) ports.PRRow {
+	return ports.PRRow{
 		URL:          p.Url,
 		SessionID:    p.SessionID,
 		Number:       int(p.Number),
@@ -177,33 +177,33 @@ func prRowFromGen(p gen.Pr) domain.PRRow {
 	}
 }
 
-func genCheckParams(c domain.PRCheckRow) gen.UpsertPRCheckParams {
+func genCheckParams(prURL string, c ports.PRCheckRow) gen.UpsertPRCheckParams {
 	status := c.Status
 	if status == "" {
 		status = domain.PRCheckUnknown
 	}
 	return gen.UpsertPRCheckParams{
-		PrUrl: c.PRURL, Name: c.Name, CommitHash: c.CommitHash,
+		PrUrl: prURL, Name: c.Name, CommitHash: c.CommitHash,
 		Status: status, Url: c.URL, LogTail: c.LogTail, CreatedAt: c.CreatedAt,
 	}
 }
 
-func checkRowFromGen(c gen.PrCheck) domain.PRCheckRow {
-	return domain.PRCheckRow{
-		PRURL: c.PrUrl, Name: c.Name, CommitHash: c.CommitHash,
-		Status: c.Status, URL: c.Url, LogTail: c.LogTail, CreatedAt: c.CreatedAt,
+func checkRowFromGen(c gen.PrCheck) ports.PRCheckRow {
+	return ports.PRCheckRow{
+		Name: c.Name, CommitHash: c.CommitHash, Status: c.Status,
+		URL: c.Url, LogTail: c.LogTail, CreatedAt: c.CreatedAt,
 	}
 }
 
-func genCommentParams(prURL string, c domain.PRComment) gen.InsertPRCommentParams {
+func genCommentParams(prURL string, c ports.PRComment) gen.InsertPRCommentParams {
 	return gen.InsertPRCommentParams{
 		PrUrl: prURL, CommentID: c.ID, Author: c.Author, File: c.File,
 		Line: int64(c.Line), Body: c.Body, Resolved: c.Resolved, CreatedAt: c.CreatedAt,
 	}
 }
 
-func commentFromGen(c gen.PrComment) domain.PRComment {
-	return domain.PRComment{
+func commentFromGen(c gen.PrComment) ports.PRComment {
+	return ports.PRComment{
 		ID: c.CommentID, Author: c.Author, File: c.File, Line: int(c.Line),
 		Body: c.Body, Resolved: c.Resolved, CreatedAt: c.CreatedAt,
 	}

@@ -83,7 +83,7 @@ func New(d Deps) *Manager {
 
 // Spawn creates the session row (which assigns the "{project}-{n}" id), then the
 // workspace and runtime, then reports completion to the LCM. A failure after the
-// row exists routes it to a terminal errored state and rolls back what was built.
+// row exists parks it as terminated and rolls back what was built.
 func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
 	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, m.clock()))
 	if err != nil {
@@ -93,7 +93,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 	ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{ProjectID: cfg.ProjectID, SessionID: id, Branch: cfg.Branch})
 	if err != nil {
-		m.markErrored(ctx, id)
+		m.markSpawnFailedTerminated(ctx, id)
 		return domain.Session{}, fmt.Errorf("spawn %s: workspace: %w", id, err)
 	}
 
@@ -106,7 +106,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	})
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
-		m.markErrored(ctx, id)
+		m.markSpawnFailedTerminated(ctx, id)
 		return domain.Session{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
@@ -114,15 +114,15 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err := m.lcm.MarkSpawned(ctx, id, outcome); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		_ = m.workspace.Destroy(ctx, ws)
-		m.markErrored(ctx, id)
+		m.markSpawnFailedTerminated(ctx, id)
 		return domain.Session{}, fmt.Errorf("spawn %s: completed: %w", id, err)
 	}
 	return m.Get(ctx, id)
 }
 
-// markErrored best-effort parks an orphaned spawn in a terminal errored state
-// (the store has no delete; a phantom "spawning" row is worse than a terminal one).
-func (m *Manager) markErrored(ctx context.Context, id domain.SessionID) {
+// markSpawnFailedTerminated best-effort parks an orphaned spawn as terminated.
+// The store has no delete; a phantom half-spawned row is worse than a terminal one.
+func (m *Manager) markSpawnFailedTerminated(ctx context.Context, id domain.SessionID) {
 	_ = m.lcm.MarkTerminated(ctx, id)
 }
 
