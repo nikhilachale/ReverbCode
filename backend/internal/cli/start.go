@@ -26,6 +26,7 @@ func newStartCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the AO daemon",
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := ctx.startDaemon(cmd.Context(), opts)
 			if err != nil {

@@ -24,6 +24,7 @@ func newStopCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "stop",
 		Short: "Stop the AO daemon",
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := ctx.stopDaemon(cmd.Context(), opts)
 			if err != nil {

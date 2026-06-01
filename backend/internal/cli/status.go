@@ -55,6 +55,7 @@ func newStatusCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show AO daemon status",
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := ctx.inspectDaemon(cmd.Context())
 			if err != nil {

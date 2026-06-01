@@ -38,6 +38,7 @@ func newDoctorCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Run local AO health checks",
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			checks := ctx.runDoctor(cmd.Context())
 			failures := 0

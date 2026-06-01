@@ -147,11 +147,19 @@ type commandContext struct {
 	deps Deps
 }
 
+func noArgs(cmd *cobra.Command, args []string) error {
+	if err := cobra.ExactArgs(0)(cmd, args); err != nil {
+		return usageError{err}
+	}
+	return nil
+}
+
 func newDaemonCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:    "daemon",
 		Short:  "Run the AO backend daemon",
 		Hidden: true,
+		Args:   noArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return daemon.Run()
 		},

@@ -34,6 +34,27 @@ func TestRootHelpDoesNotShowDaemon(t *testing.T) {
 	}
 }
 
+func TestCommandsRejectUnexpectedArgs(t *testing.T) {
+	for _, args := range [][]string{
+		{"daemon", "extra"},
+		{"start", "extra"},
+		{"stop", "extra"},
+		{"status", "extra"},
+		{"doctor", "extra"},
+		{"version", "extra"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			_, _, err := executeCLI(t, Deps{}, args...)
+			if err == nil {
+				t.Fatal("expected usage error")
+			}
+			if got := ExitCode(err); got != 2 {
+				t.Fatalf("ExitCode(%v) = %d, want 2", err, got)
+			}
+		})
+	}
+}
+
 func TestStatusStoppedJSON(t *testing.T) {
 	setConfigEnv(t)
 
