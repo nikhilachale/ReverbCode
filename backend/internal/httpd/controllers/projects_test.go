@@ -1,6 +1,7 @@
 package controllers_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -13,10 +14,35 @@ import (
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/project"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
+
+// emptyGetManager returns a GetResult that sets neither Project nor Degraded —
+// a Manager-contract violation — so the test can prove the handler answers a
+// clean 500 before writing the 200 status.
+type emptyGetManager struct{ project.Manager }
+
+func (emptyGetManager) Get(context.Context, domain.ProjectID) (project.GetResult, error) {
+	return project.GetResult{}, nil
+}
+
+// TestProjectsAPI_GetEmptyResultIs500 locks the fix for the discriminated-union
+// invariant: a degenerate GetResult must surface as a parseable 500 envelope,
+// not a 200 with truncated JSON.
+func TestProjectsAPI_GetEmptyResultIs500(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithAPI(config.Config{}, log, nil, httpd.APIDeps{
+		Projects: emptyGetManager{},
+	}))
+	t.Cleanup(srv.Close)
+
+	body, status, headers := doRequest(t, srv, "GET", "/api/v1/projects/whatever", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusInternalServerError, "INTERNAL_ERROR")
+}
 
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
@@ -43,7 +69,7 @@ func TestProjectsRoutes_DefaultToStubsWithoutManager(t *testing.T) {
 	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
 }
 
-func TestProjectsAPI_ListAddGetReload(t *testing.T) {
+func TestProjectsAPI_ListAddGet(t *testing.T) {
 	srv := newTestServer(t)
 	repo := gitRepo(t, "agent-orchestrator")
 
@@ -84,20 +110,6 @@ func TestProjectsAPI_ListAddGetReload(t *testing.T) {
 	if get.Status != "ok" || get.Project.ID != "ao" {
 		t.Fatalf("get response = %#v", get)
 	}
-
-	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects/reload", "")
-	if status != http.StatusOK {
-		t.Fatalf("reload = %d, want 200; body=%s", status, body)
-	}
-	var reload struct {
-		Reloaded      bool `json:"reloaded"`
-		ProjectCount  int  `json:"projectCount"`
-		DegradedCount int  `json:"degradedCount"`
-	}
-	mustJSON(t, body, &reload)
-	if !reload.Reloaded || reload.ProjectCount != 1 || reload.DegradedCount != 0 {
-		t.Fatalf("reload response = %#v", reload)
-	}
 }
 
 func TestProjectsAPI_AddValidationAndConflicts(t *testing.T) {
@@ -133,7 +145,7 @@ func TestProjectsAPI_AddValidationAndConflicts(t *testing.T) {
 	assertErrorCode(t, body, status, http.StatusConflict, "ID_ALREADY_REGISTERED")
 }
 
-func TestProjectsAPI_UpdateDeleteRepair(t *testing.T) {
+func TestProjectsAPI_Delete(t *testing.T) {
 	srv := newTestServer(t)
 	repo := gitRepo(t, "repo")
 
@@ -141,15 +153,6 @@ func TestProjectsAPI_UpdateDeleteRepair(t *testing.T) {
 	if status != http.StatusCreated {
 		t.Fatalf("seed create = %d, want 201; body=%s", status, body)
 	}
-
-	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/projects/proj", `{"agent":"claude"}`)
-	assertErrorCode(t, body, status, http.StatusNotImplemented, "PROJECT_CONFIG_NOT_IMPLEMENTED")
-
-	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/projects/proj", `{"path":"elsewhere"}`)
-	assertErrorCode(t, body, status, http.StatusBadRequest, "IDENTITY_FROZEN")
-
-	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects/proj/repair", "")
-	assertErrorCode(t, body, status, http.StatusBadRequest, "REPAIR_NOT_AVAILABLE")
 
 	body, status, _ = doRequest(t, srv, "DELETE", "/api/v1/projects/proj", "")
 	if status != http.StatusOK {
@@ -190,7 +193,6 @@ func TestProjectsRoutes_LegacyUnregistered(t *testing.T) {
 		wantStatus                  int
 	}{
 		{method: "PUT", path: "/api/v1/projects/p1", wantStatus: 405, wantCode: "METHOD_NOT_ALLOWED", why: "R3 PUT not registered"},
-		{method: "POST", path: "/api/v1/projects/p1", wantStatus: 405, wantCode: "METHOD_NOT_ALLOWED", why: "R4 repair moved to /repair"},
 	}
 
 	for _, tc := range cases {

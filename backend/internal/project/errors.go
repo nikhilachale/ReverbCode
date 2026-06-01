@@ -32,10 +32,6 @@ func conflict(code, message string, details map[string]any) *Error {
 	return newError("conflict", code, message, details)
 }
 
-func notImplemented(code, message string) *Error {
-	return newError("not_implemented", code, message, nil)
-}
-
 func internal(code, message string) *Error {
 	return newError("internal", code, message, nil)
 }

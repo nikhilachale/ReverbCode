@@ -26,15 +26,6 @@ type AddInput struct {
 	Name      *string `json:"name,omitempty"`
 }
 
-// UpdateConfigInput is the body shape for PATCH /api/v1/projects/{id}. Only
-// behaviour fields are mutable; identity fields (projectId, path, repo,
-// defaultBranch) are rejected by the handler with a 400 IDENTITY_FROZEN.
-type UpdateConfigInput struct {
-	Agent   *string        `json:"agent,omitempty"`
-	Tracker *TrackerConfig `json:"tracker,omitempty"`
-	SCM     *SCMConfig     `json:"scm,omitempty"`
-}
-
 // RemoveResult reports what DELETE /api/v1/projects/{id} actually did.
 // RemovedStorageDir is false when the project was registry-only (no on-disk
 // session/workspace directory existed).
@@ -43,11 +34,3 @@ type RemoveResult struct {
 	RemovedStorageDir bool             `json:"removedStorageDir"`
 }
 
-// ReloadResult is the response body of POST /api/v1/projects/reload — the
-// manager invalidates its cached config and re-scans the registry; the counts
-// help the dashboard show "loaded N projects, M degraded" feedback.
-type ReloadResult struct {
-	Reloaded      bool `json:"reloaded"`
-	ProjectCount  int  `json:"projectCount"`
-	DegradedCount int  `json:"degradedCount"`
-}

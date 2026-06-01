@@ -1,3 +1,5 @@
+// Package project owns the projects service contract: the Manager interface,
+// its implementation, and the request/response DTOs that cross it.
 package project
 
 import (
@@ -12,6 +14,24 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
+
+// Manager is the inbound contract for the /api/v1/projects surface. One
+// implementation lives in this package; the HTTP controller is the consumer.
+type Manager interface {
+	// List returns every registered project, including degraded entries
+	// (those whose config failed to load but whose registry entry survives).
+	List(ctx context.Context) ([]Summary, error)
+
+	// Get returns one project, discriminating ok vs degraded via GetResult.
+	Get(ctx context.Context, id domain.ProjectID) (GetResult, error)
+
+	// Add registers a new project from a git repository path.
+	Add(ctx context.Context, in AddInput) (Project, error)
+
+	// Remove unregisters a project, stopping its sessions and reclaiming
+	// managed workspaces.
+	Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error)
+}
 
 type manager struct {
 	store Store
@@ -111,21 +131,6 @@ func (m *manager) Add(ctx context.Context, in AddInput) (Project, error) {
 	return projectFromRow(row), nil
 }
 
-func (m *manager) UpdateConfig(ctx context.Context, id domain.ProjectID, _ UpdateConfigInput) (Project, error) {
-	if err := validateProjectID(id); err != nil {
-		return Project{}, err
-	}
-	_, ok, err := m.store.Get(ctx, string(id))
-	if err != nil {
-		return Project{}, internal("PROJECT_LOAD_FAILED", "Failed to load project")
-	}
-	if !ok {
-		return Project{}, notFound("PROJECT_NOT_FOUND", "Unknown project")
-	}
-
-	return Project{}, notImplemented("PROJECT_CONFIG_NOT_IMPLEMENTED", "Project config patching is not available until config persistence is wired")
-}
-
 func (m *manager) Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error) {
 	if err := validateProjectID(id); err != nil {
 		return RemoveResult{}, err
@@ -138,26 +143,6 @@ func (m *manager) Remove(ctx context.Context, id domain.ProjectID) (RemoveResult
 		return RemoveResult{}, notFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
 	return RemoveResult{ProjectID: id, RemovedStorageDir: false}, nil
-}
-
-func (m *manager) Repair(ctx context.Context, id domain.ProjectID) (Project, error) {
-	if err := validateProjectID(id); err != nil {
-		return Project{}, err
-	}
-	if _, ok, err := m.store.Get(ctx, string(id)); err != nil {
-		return Project{}, internal("PROJECT_LOAD_FAILED", "Failed to load project")
-	} else if !ok {
-		return Project{}, notFound("PROJECT_NOT_FOUND", "Unknown project")
-	}
-	return Project{}, badRequest("REPAIR_NOT_AVAILABLE", "Automatic repair is not available for this degraded config", nil)
-}
-
-func (m *manager) Reload(ctx context.Context) (ReloadResult, error) {
-	projects, err := m.store.List(ctx)
-	if err != nil {
-		return ReloadResult{}, internal("RELOAD_FAILED", "Failed to reload projects")
-	}
-	return ReloadResult{Reloaded: true, ProjectCount: len(projects), DegradedCount: 0}, nil
 }
 
 func (m *manager) suggestID(ctx context.Context, base domain.ProjectID) domain.ProjectID {
