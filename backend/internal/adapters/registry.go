@@ -1,3 +1,6 @@
+// Package adapters defines the plugin contract every external integration
+// (agent, tracker, scm, runtime) satisfies plus a registry that holds the
+// concrete plugins the daemon resolves by id.
 package adapters
 
 import (
@@ -5,13 +8,16 @@ import (
 	"sort"
 )
 
+// Capability tags a Manifest with the role(s) a plugin fills.
 type Capability string
 
+// Known capabilities. A plugin may advertise more than one.
 const (
 	CapabilityAgent        Capability = "agent"
 	CapabilityIssueTracker Capability = "issue-tracker"
 )
 
+// Manifest is the self-describing record every Adapter returns.
 type Manifest struct {
 	ID           string       `json:"id"`
 	Name         string       `json:"name"`
@@ -20,20 +26,27 @@ type Manifest struct {
 	Capabilities []Capability `json:"capabilities"`
 }
 
+// Adapter is the minimal contract every registered plugin satisfies: it can
+// describe itself via Manifest. Per-capability behaviour lives on richer
+// interfaces (e.g. agent.Agent) that callers obtain via type assertion.
 type Adapter interface {
 	Manifest() Manifest
 }
 
+// Registry holds the daemon's resolved plugins, keyed by Manifest.ID.
 type Registry struct {
 	adapters map[string]Adapter
 }
 
+// NewRegistry returns an empty Registry ready to accept Register calls.
 func NewRegistry() *Registry {
 	return &Registry{
 		adapters: make(map[string]Adapter),
 	}
 }
 
+// Register adds adapter under its Manifest.ID, returning an error when the id
+// is empty or already in use.
 func (r *Registry) Register(adapter Adapter) error {
 	manifest := adapter.Manifest()
 	if manifest.ID == "" {
@@ -54,6 +67,8 @@ func (r *Registry) Get(id string) (Adapter, bool) {
 	return p, ok
 }
 
+// Manifests returns every registered adapter's Manifest, sorted by id for
+// deterministic output.
 func (r *Registry) Manifests() []Manifest {
 	manifests := make([]Manifest, 0, len(r.adapters))
 	for _, adapter := range r.adapters {

@@ -52,11 +52,13 @@ const (
 // pre-hook sessions) agree without persisting anything.
 var claudeSessionNamespace = uuid.MustParse("a1f0c3d2-7b54-4e96-8a2b-0d9e1f2a3b4c")
 
+// Plugin is the Claude Code adapter. The zero value is not usable; call New.
 type Plugin struct {
 	binaryMu       sync.Mutex
 	resolvedBinary string
 }
 
+// New constructs a Claude Code adapter instance.
 func New() *Plugin {
 	return &Plugin{}
 }
@@ -64,6 +66,7 @@ func New() *Plugin {
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ agent.Agent = (*Plugin)(nil)
 
+// Manifest reports the adapter's self-describing record.
 func (p *Plugin) Manifest() adapters.Manifest {
 	return adapters.Manifest{
 		ID:          adapterID,
@@ -76,6 +79,8 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec returns the agent-specific config keys this adapter exposes.
+// Claude Code has none today.
 func (p *Plugin) GetConfigSpec(ctx context.Context) (agent.ConfigSpec, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.ConfigSpec{}, err
@@ -132,6 +137,8 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg agent.LaunchConfig) (
 	return cmd, nil
 }
 
+// GetPromptDeliveryStrategy reports how Better-AO should deliver the initial
+// prompt. Claude Code accepts it in the launch command.
 func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg agent.LaunchConfig) (agent.PromptDeliveryStrategy, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -191,7 +198,8 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg agent.RestoreConfig)
 	if err != nil {
 		return nil, false, err
 	}
-	cmd = []string{binary}
+	cmd = make([]string, 0, 5)
+	cmd = append(cmd, binary)
 	appendPermissionFlags(&cmd, cfg.Permissions)
 	cmd = append(cmd, "--resume", sessionID)
 	return cmd, true, nil
@@ -415,7 +423,7 @@ func ensureWorkspaceTrusted(configPath, workspacePath string) error {
 		return fmt.Errorf("claude-code: create temp config: %w", err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op once renamed
+	defer func() { _ = os.Remove(tmpName) }() // no-op once renamed
 
 	if _, err := tmp.Write(out); err != nil {
 		_ = tmp.Close()

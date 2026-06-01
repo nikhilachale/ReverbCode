@@ -58,6 +58,7 @@ type ConfigField struct {
 // ConfigFieldType is the primitive value kind Better-AO expects for a field.
 type ConfigFieldType string
 
+// Known ConfigFieldType values.
 const (
 	ConfigFieldString     ConfigFieldType = "string"
 	ConfigFieldBool       ConfigFieldType = "bool"
@@ -111,10 +112,12 @@ type SessionInfo struct {
 // PermissionMode controls how much review an agent requires before acting.
 type PermissionMode string
 
+// Known PermissionMode values.
+//
+// PermissionModeDefault is special: adapters emit no flag for it so the agent
+// resolves its starting mode from the user's own config (e.g. Claude's TUI
+// reading ~/.claude/settings.json defaultMode).
 const (
-	// "default" is special: adapters emit no flag for it so the agent resolves
-	// its starting mode from the user's own config (e.g. Claude's TUI reading
-	// ~/.claude/settings.json defaultMode).
 	PermissionModeDefault           PermissionMode = "default"
 	PermissionModeAcceptEdits       PermissionMode = "accept-edits"
 	PermissionModeAuto              PermissionMode = "auto"
@@ -124,6 +127,7 @@ const (
 // PromptDeliveryStrategy describes how Better-AO should deliver the initial prompt.
 type PromptDeliveryStrategy string
 
+// Known PromptDeliveryStrategy values.
 const (
 	PromptDeliveryInCommand  PromptDeliveryStrategy = "in_command"
 	PromptDeliveryAfterStart PromptDeliveryStrategy = "after_start"

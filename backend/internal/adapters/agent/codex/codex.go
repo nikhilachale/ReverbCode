@@ -25,11 +25,13 @@ const (
 	codexSummaryMetadataKey        = "summary"
 )
 
+// Plugin is the Codex adapter. The zero value is not usable; call New.
 type Plugin struct {
 	binaryMu       sync.Mutex
 	resolvedBinary string
 }
 
+// New constructs a Codex adapter instance.
 func New() *Plugin {
 	return &Plugin{}
 }
@@ -37,6 +39,7 @@ func New() *Plugin {
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ agent.Agent = (*Plugin)(nil)
 
+// Manifest reports the adapter's self-describing record.
 func (p *Plugin) Manifest() adapters.Manifest {
 	return adapters.Manifest{
 		ID:          "codex",
@@ -49,6 +52,8 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec returns the agent-specific config keys this adapter exposes.
+// Codex has none today.
 func (p *Plugin) GetConfigSpec(ctx context.Context) (agent.ConfigSpec, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.ConfigSpec{}, err
@@ -56,6 +61,7 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (agent.ConfigSpec, error) {
 	return agent.ConfigSpec{}, nil
 }
 
+// GetLaunchCommand builds the argv to start a fresh Codex session.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg agent.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.codexBinary(ctx)
 	if err != nil {
@@ -79,6 +85,8 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg agent.LaunchConfig) (
 	return cmd, nil
 }
 
+// GetPromptDeliveryStrategy reports how Better-AO should deliver the initial
+// prompt. Codex accepts it in the launch command.
 func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg agent.LaunchConfig) (agent.PromptDeliveryStrategy, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -104,7 +112,8 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg agent.RestoreConfig)
 		return nil, false, err
 	}
 
-	cmd = []string{binary, "resume"}
+	cmd = make([]string, 0, 5)
+	cmd = append(cmd, binary, "resume")
 	appendNoUpdateCheckFlag(&cmd)
 	appendApprovalFlags(&cmd, cfg.Permissions)
 	cmd = append(cmd, agentSessionID)
