@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
@@ -156,7 +158,12 @@ func TestProjectRepoResolver_ResolvesRegisteredProject(t *testing.T) {
 	if got != "/repo/mer" {
 		t.Fatalf("RepoPath(mer) = %q, want /repo/mer", got)
 	}
-	if _, err := r.RepoPath("nope"); err == nil {
+	_, err = r.RepoPath("nope")
+	if err == nil {
 		t.Fatal("expected an error for an unregistered project")
+	}
+	// Guard the sentinel wrapping so the HTTP 400 mapping can't silently regress.
+	if !errors.Is(err, sessionmanager.ErrProjectNotResolvable) {
+		t.Fatalf("unregistered-project error should wrap ErrProjectNotResolvable, got %v", err)
 	}
 }
