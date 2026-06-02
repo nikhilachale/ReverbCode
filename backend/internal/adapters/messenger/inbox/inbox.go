@@ -70,15 +70,22 @@ func (m *Messenger) Send(ctx context.Context, id domain.SessionID, message strin
 	}
 
 	name := FilenameFor(TimeFromContext(ctx, m.clock), message)
-	f, err := os.OpenFile(filepath.Join(inboxDir, name), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	path := filepath.Join(inboxDir, name)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("inbox: write %s for %s: %w", name, id, err)
 	}
+	// On a failed write/close, remove the file we just created: O_EXCL proved it
+	// did not exist before this call, so the cleanup can only delete our own
+	// empty/partial file — never a legitimate earlier message — and keeps the
+	// agent's next inbox scan from picking up a truncated ghost.
 	if _, err := f.WriteString(message); err != nil {
 		_ = f.Close()
+		_ = os.Remove(path)
 		return fmt.Errorf("inbox: write body %s for %s: %w", name, id, err)
 	}
 	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
 		return fmt.Errorf("inbox: close %s for %s: %w", name, id, err)
 	}
 	return nil
