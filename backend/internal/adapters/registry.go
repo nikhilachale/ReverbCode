@@ -31,6 +31,10 @@ type Adapter interface {
 }
 
 // Registry holds registered adapters keyed by their manifest id.
+//
+// Registry is not safe for concurrent registration: every Register call is
+// expected at daemon boot, before any goroutine calls Get. Concurrent
+// Register and Get would race on the underlying map.
 type Registry struct {
 	adapters map[string]Adapter
 }
