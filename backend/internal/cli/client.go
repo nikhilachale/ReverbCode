@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -114,6 +115,9 @@ func (c *commandContext) doJSON(ctx context.Context, method, path string, body, 
 	}
 	if out != nil {
 		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
 			return fmt.Errorf("decode response: %w", err)
 		}
 	}

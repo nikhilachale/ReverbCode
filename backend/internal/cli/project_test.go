@@ -114,6 +114,29 @@ func TestProjectGet_Success(t *testing.T) {
 	}
 }
 
+func TestProjectGet_JSON(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectServer(t, http.StatusOK, `{"status":"degraded","project":{"id":"demo","name":"Demo","path":"/repo/demo","resolveError":"config missing"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "get", "demo", "--json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodGet || capture.path != "/api/v1/projects/demo" {
+		t.Fatalf("request = %s %s, want GET /api/v1/projects/demo", capture.method, capture.path)
+	}
+	var got projectGetResult
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("decode json output: %v\nout=%s", err, out)
+	}
+	if got.Status != "degraded" || got.Project.ID != "demo" || got.Project.ResolveError != "config missing" {
+		t.Fatalf("get json = %#v, want degraded demo with resolve error", got)
+	}
+}
+
 func TestProjectGet_MissingArg(t *testing.T) {
 	setConfigEnv(t)
 	_, _, err := executeCLI(t, Deps{}, "project", "get")
@@ -204,6 +227,67 @@ func TestProjectRemove_DeletesAfterConfirmation(t *testing.T) {
 	}
 	if !strings.Contains(out, "removed project demo") {
 		t.Fatalf("output missing removal message:\n%s", out)
+	}
+}
+
+func TestProjectRemove_JSONDocumentedEnvelope(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectServer(t, http.StatusOK, `{"ok":true,"id":"demo"}`)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		In:           strings.NewReader("wrong\n"),
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "rm", "demo", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodDelete || capture.path != "/api/v1/projects/demo" {
+		t.Fatalf("request = %s %s, want DELETE /api/v1/projects/demo", capture.method, capture.path)
+	}
+	var got projectRemoveResult
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("decode json output: %v\nout=%s", err, out)
+	}
+	if !got.OK || got.ID != "demo" || got.ProjectID != "" {
+		t.Fatalf("remove json = %#v, want documented ok/id envelope", got)
+	}
+}
+
+func TestProjectRemove_JSONBackendEnvelope(t *testing.T) {
+	cfg := setConfigEnv(t)
+	removedStorageDir := false
+	srv, _ := projectServer(t, http.StatusOK, `{"projectId":"demo","removedStorageDir":false}`)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "rm", "demo", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var got projectRemoveResult
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("decode json output: %v\nout=%s", err, out)
+	}
+	if got.ProjectID != "demo" || got.RemovedStorageDir == nil || *got.RemovedStorageDir != removedStorageDir {
+		t.Fatalf("remove json = %#v, want backend projectId/removedStorageDir envelope", got)
+	}
+}
+
+func TestProjectRemove_EmptySuccessFallsBackToRequestedID(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, _ := projectServer(t, http.StatusNoContent, ``)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "rm", "demo", "--yes")
+	if err != nil {
+		t.Fatalf("unexpected error for empty 2xx body: %v\nstderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, "removed project demo") {
+		t.Fatalf("output missing fallback removal id:\n%s", out)
 	}
 }
 
