@@ -11,6 +11,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/project"
+	"github.com/aoagents/agent-orchestrator/backend/internal/session"
 )
 
 // APIDeps bundles every Manager the API layer's controllers depend on.
@@ -19,6 +20,7 @@ import (
 // registered but returns the OpenAPI-backed 501 response.
 type APIDeps struct {
 	Projects project.Manager
+	Sessions *session.Manager
 }
 
 // API owns one controller per resource and is the single Register call the
@@ -38,7 +40,9 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		projects: &controllers.ProjectsController{
 			Mgr: deps.Projects,
 		},
-		sessions: &controllers.SessionsController{},
+		sessions: &controllers.SessionsController{
+			Mgr: deps.Sessions,
+		},
 	}
 }
 

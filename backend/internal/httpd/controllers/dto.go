@@ -104,10 +104,10 @@ type SessionIDParam struct {
 
 // ListSessionsQuery is the filter surface for GET /api/v1/sessions.
 type ListSessionsQuery struct {
-	Project          string `query:"project" description:"Optional project id filter."`
-	Active           *bool  `query:"active" description:"Optional active/terminal filter."`
-	OrchestratorOnly *bool  `query:"orchestratorOnly" description:"When true, return only orchestrator sessions."`
-	Fresh            *bool  `query:"fresh" description:"Optional freshness filter for dashboard reads."`
+	Project          domain.ProjectID `query:"project" description:"Optional project id filter."`
+	Active           *bool            `query:"active" description:"Optional active/terminal filter."`
+	OrchestratorOnly *bool            `query:"orchestratorOnly" description:"When true, return only orchestrator sessions."`
+	Fresh            *bool            `query:"fresh" description:"Optional freshness filter for dashboard reads."`
 }
 
 // SpawnSessionRequest is the body of POST /api/v1/sessions.

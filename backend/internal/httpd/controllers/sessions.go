@@ -6,11 +6,14 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
+	"github.com/aoagents/agent-orchestrator/backend/internal/session"
 )
 
 // SessionsController owns the canonical /sessions route shell. Business logic
 // lands later; these handlers expose the code-generated contract as 501s.
-type SessionsController struct{}
+type SessionsController struct {
+	Mgr *session.Manager
+}
 
 // Register mounts only routes whose request/response bytes are settled enough
 // for the first session route-shell slice.
