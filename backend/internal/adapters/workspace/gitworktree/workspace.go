@@ -241,7 +241,12 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch string) 
 // `git worktree add`. Errors are swallowed: the caller is already returning
 // the underlying add failure, which is the actionable signal. Safe to use
 // --force here because no agent has had a chance to commit into this path.
-func (w *Workspace) cleanupOrphan(ctx context.Context, repo, path string) {
+// A fresh background context (with its own timeout) is used so that a
+// cancelled caller context — e.g. an HTTP request aborted mid-add — does
+// not also kill the cleanup subprocess and leave the orphan behind.
+func (w *Workspace) cleanupOrphan(_ context.Context, repo, path string) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultCommandTimeout)
+	defer cancel()
 	_, _ = w.run(ctx, w.binary, worktreeRemoveForceArgs(repo, path)...)
 }
 

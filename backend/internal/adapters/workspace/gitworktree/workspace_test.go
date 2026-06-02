@@ -561,6 +561,55 @@ func TestCreateCleanupSwallowsSecondaryError(t *testing.T) {
 	}
 }
 
+func TestCreateCleanupRunsWithFreshContextWhenCallerCancelled(t *testing.T) {
+	// When the caller's ctx is cancelled mid-add (e.g. HTTP request
+	// aborted), cleanupOrphan MUST run with a fresh context. Reusing the
+	// cancelled caller ctx — directly or via withDefaultTimeout — yields
+	// an already-cancelled child, the `worktree remove --force` subprocess
+	// is killed before it runs, and the orphan that cleanupOrphan exists
+	// to prevent is left on disk.
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	var (
+		cleanupCalled bool
+		cleanupCtxErr error
+	)
+	ws.run = func(callerCtx context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "remote get-url origin"):
+			return nil, errors.New("no origin")
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/one"):
+			return nil, &exec.ExitError{ProcessState: stubExitState(1)}
+		case strings.Contains(joined, "rev-parse --verify --quiet"):
+			return []byte("abc\n"), nil
+		case strings.Contains(joined, "worktree add"):
+			return nil, errors.New("fatal: add failed")
+		case strings.Contains(joined, "worktree remove --force"):
+			cleanupCalled = true
+			cleanupCtxErr = callerCtx.Err()
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _ = ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if !cleanupCalled {
+		t.Fatal("cleanup must run even when caller ctx is cancelled")
+	}
+	if cleanupCtxErr != nil {
+		t.Fatalf("cleanup ctx must be fresh, got Err()=%v", cleanupCtxErr)
+	}
+}
+
 func TestCreateCleansUpOrphanWhenAddFailsExistingBranch(t *testing.T) {
 	// Covers the addWorktree localBranch=true path: refs/heads/<branch> exists,
 	// so we skip resolveBaseRef and call `worktree add <path> <branch>` (no -b).
