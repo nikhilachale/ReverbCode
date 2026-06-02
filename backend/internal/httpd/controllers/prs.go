@@ -62,8 +62,10 @@ func (c *PRsController) resolveComments(w http.ResponseWriter, r *http.Request) 
 }
 
 // isEmptyBody reports whether err signals an absent or empty request body.
+// io.ErrUnexpectedEOF means a truncated/malformed body — that is a bad request,
+// not an absent one, so it is intentionally excluded here.
 func isEmptyBody(err error) bool {
-	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+	return errors.Is(err, io.EOF)
 }
 
 // writePRError maps the four domain-level PR sentinel errors to their locked
