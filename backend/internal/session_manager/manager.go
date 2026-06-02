@@ -347,13 +347,12 @@ func (m *Manager) activeOrchestratorSessionID(ctx context.Context, project domai
 	if err != nil {
 		return "", false, fmt.Errorf("list sessions for %s: %w", project, err)
 	}
-	var id domain.SessionID
 	for _, rec := range recs {
-		if rec.ProjectID == project && rec.Kind == domain.KindOrchestrator && !rec.IsTerminated {
-			id = rec.ID
+		if rec.Kind == domain.KindOrchestrator && !rec.IsTerminated {
+			return rec.ID, true, nil
 		}
 	}
-	return id, id != "", nil
+	return "", false, nil
 }
 
 func orchestratorPrompt(project domain.ProjectID) string {
