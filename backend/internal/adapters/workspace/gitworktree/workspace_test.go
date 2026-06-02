@@ -3,7 +3,9 @@ package gitworktree
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -58,6 +60,7 @@ func TestCommandArgs(t *testing.T) {
 		{"prune", worktreePruneArgs(repo), []string{"-C", repo, "worktree", "prune"}},
 		{"list", worktreeListPorcelainArgs(repo), []string{"-C", repo, "worktree", "list", "--porcelain"}},
 		{"remote get-url", remoteGetURLOriginArgs(repo), []string{"-C", repo, "remote", "get-url", "origin"}},
+		{"fetch origin quiet", fetchOriginQuietArgs(repo), []string{"-C", repo, "fetch", "origin", "--quiet"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -297,4 +300,133 @@ func mkdirFile(dir, name string) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, name), []byte("data"), 0o644)
+}
+
+func containsArgs(calls [][]string, sub []string) bool {
+	return indexOfArgs(calls, sub) >= 0
+}
+
+func indexOfArgs(calls [][]string, sub []string) int {
+	for i, c := range calls {
+		joined := strings.Join(c, " ")
+		if strings.Contains(joined, strings.Join(sub, " ")) {
+			return i
+		}
+	}
+	return -1
+}
+
+// stubExitState spawns a tiny shell command that exits with the requested
+// code so the returned *os.ProcessState carries a real exit code — avoids
+// constructing os/exec internals. Depends on a POSIX `sh` in PATH; if/when
+// Windows CI is added this needs a platform branch.
+func stubExitState(code int) *os.ProcessState {
+	cmd := exec.Command("sh", "-c", fmt.Sprintf("exit %d", code))
+	_ = cmd.Run()
+	return cmd.ProcessState
+}
+
+func TestCreateFetchesOriginWhenPresent(t *testing.T) {
+	ws, err := New(Options{ManagedRoot: t.TempDir(), RepoResolver: StaticRepoResolver{"proj": "/repo"}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	var calls [][]string
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		calls = append(calls, append([]string{}, args...))
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "remote get-url origin"):
+			return []byte("origin\n"), nil
+		case strings.Contains(joined, "fetch origin --quiet"):
+			return nil, nil
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/one"):
+			return nil, &exec.ExitError{ProcessState: stubExitState(1)}
+		case strings.Contains(joined, "rev-parse --verify --quiet"):
+			return []byte("abc\n"), nil
+		case strings.Contains(joined, "worktree add"):
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	}
+	_, err = ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	fetchIdx := indexOfArgs(calls, []string{"fetch", "origin", "--quiet"})
+	addIdx := indexOfArgs(calls, []string{"worktree", "add"})
+	if fetchIdx < 0 {
+		t.Fatalf("expected git fetch origin --quiet call; calls=%v", calls)
+	}
+	if addIdx < 0 {
+		t.Fatalf("expected git worktree add call; calls=%v", calls)
+	}
+	if fetchIdx > addIdx {
+		t.Fatalf("expected fetch before worktree add: fetchIdx=%d addIdx=%d", fetchIdx, addIdx)
+	}
+}
+
+func TestCreateSkipsFetchWhenNoOrigin(t *testing.T) {
+	ws, err := New(Options{ManagedRoot: t.TempDir(), RepoResolver: StaticRepoResolver{"proj": "/repo"}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	var calls [][]string
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		calls = append(calls, append([]string{}, args...))
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "remote get-url origin"):
+			return nil, errors.New("fatal: no such remote 'origin'")
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/one"):
+			return nil, &exec.ExitError{ProcessState: stubExitState(1)}
+		case strings.Contains(joined, "rev-parse --verify --quiet"):
+			return []byte("abc\n"), nil
+		case strings.Contains(joined, "worktree add"):
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	}
+	_, err = ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if containsArgs(calls, []string{"fetch", "origin", "--quiet"}) {
+		t.Fatalf("expected no fetch when origin absent; calls=%v", calls)
+	}
+}
+
+func TestCreateContinuesWhenFetchFails(t *testing.T) {
+	ws, err := New(Options{ManagedRoot: t.TempDir(), RepoResolver: StaticRepoResolver{"proj": "/repo"}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "remote get-url origin"):
+			return []byte("origin\n"), nil
+		case strings.Contains(joined, "fetch origin --quiet"):
+			return nil, errors.New("could not resolve host")
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/one"):
+			return nil, &exec.ExitError{ProcessState: stubExitState(1)}
+		case strings.Contains(joined, "rev-parse --verify --quiet"):
+			return []byte("abc\n"), nil
+		case strings.Contains(joined, "worktree add"):
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	}
+	if _, err := ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"}); err != nil {
+		t.Fatalf("create with failing fetch: %v", err)
+	}
 }

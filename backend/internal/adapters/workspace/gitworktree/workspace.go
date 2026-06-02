@@ -110,6 +110,11 @@ func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (port
 	if err := w.validateBranch(ctx, repo, cfg.Branch); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
+	// NOTE: hasOriginRemote is also called inside resolveBaseRef; consolidation
+	// deferred (see the followup issue for upstream-parity work).
+	if w.hasOriginRemote(ctx, repo) {
+		w.fetchOrigin(ctx, repo)
+	}
 	path, err := w.managedPath(cfg.ProjectID, cfg.SessionID)
 	if err != nil {
 		return ports.WorkspaceInfo{}, err
@@ -190,6 +195,11 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 	if err := w.validateBranch(ctx, repo, cfg.Branch); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
+	// NOTE: hasOriginRemote is also called inside resolveBaseRef; consolidation
+	// deferred (see the followup issue for upstream-parity work).
+	if w.hasOriginRemote(ctx, repo) {
+		w.fetchOrigin(ctx, repo)
+	}
 	if err := w.addWorktree(ctx, repo, path, cfg.Branch); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
@@ -248,6 +258,16 @@ func (w *Workspace) resolveBaseRef(ctx context.Context, repo, branch string) (st
 func (w *Workspace) hasOriginRemote(ctx context.Context, repo string) bool {
 	_, err := w.run(ctx, w.binary, remoteGetURLOriginArgs(repo)...)
 	return err == nil
+}
+
+// fetchOrigin runs `git fetch origin --quiet` and swallows the error. Offline
+// flows must still succeed; the caller can only act on locally-cached refs in
+// that case. We don't surface the fetch error because there's nothing the
+// caller can do about it that we aren't already doing (proceed with cached
+// refs and let the subsequent base-ref resolve fail loudly if there's no
+// usable ref).
+func (w *Workspace) fetchOrigin(ctx context.Context, repo string) {
+	_, _ = w.run(ctx, w.binary, fetchOriginQuietArgs(repo)...)
 }
 
 func (w *Workspace) refExists(ctx context.Context, repo, ref string) (bool, error) {

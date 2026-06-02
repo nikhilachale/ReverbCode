@@ -39,6 +39,10 @@ func remoteGetURLOriginArgs(repo string) []string {
 	return []string{"-C", repo, "remote", "get-url", "origin"}
 }
 
+func fetchOriginQuietArgs(repo string) []string {
+	return []string{"-C", repo, "fetch", "origin", "--quiet"}
+}
+
 // baseRefCandidates returns the ordered list of refs to probe for a new
 // worktree's base. When hasOrigin is true we prefer remote-tracking refs;
 // when false we skip them entirely so we don't burn subprocesses on lookups
