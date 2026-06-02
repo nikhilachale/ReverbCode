@@ -190,7 +190,15 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 	if nonEmpty, err := pathExistsNonEmpty(path); err != nil {
 		return ports.WorkspaceInfo{}, err
 	} else if nonEmpty {
-		return ports.WorkspaceInfo{}, fmt.Errorf("gitworktree: refusing to restore %q: path exists and is not a registered worktree", path)
+		// Path is non-empty AND not in the `git worktree list` records
+		// (findWorktree above already returned for the registered case).
+		// Safe to remove: we are NOT deleting a registered worktree — that
+		// invariant is preserved by the findWorktree shortcut above.
+		// Mirrors upstream's cleanupStaleWorkspacePath without compromising
+		// data safety.
+		if err := os.RemoveAll(path); err != nil {
+			return ports.WorkspaceInfo{}, fmt.Errorf("gitworktree: remove unregistered residue %q: %w", path, err)
+		}
 	}
 	if err := w.validateBranch(ctx, repo, cfg.Branch); err != nil {
 		return ports.WorkspaceInfo{}, err

@@ -233,23 +233,77 @@ func TestValidateConfigAcceptsBenignIDs(t *testing.T) {
 	}
 }
 
-func TestRestoreRefusesNonEmptyUnregisteredPath(t *testing.T) {
+func TestRestoreAutoCleansUnregisteredResidueAndProceeds(t *testing.T) {
 	root := t.TempDir()
 	repo := t.TempDir()
 	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
-	ws.run = func(context.Context, string, ...string) ([]byte, error) {
-		return []byte("worktree " + repo + "\nbranch refs/heads/main\n"), nil
-	}
 	path := filepath.Join(ws.managedRoot, "proj", "sess")
-	if err := mkdirFile(path, "keep.txt"); err != nil {
+	if err := mkdirFile(path, "leftover.txt"); err != nil {
 		t.Fatalf("seed path: %v", err)
 	}
-	_, err = ws.Restore(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
-	if err == nil || !strings.Contains(err.Error(), "path exists and is not a registered worktree") {
-		t.Fatalf("restore error = %v", err)
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "worktree list --porcelain"):
+			// Residue is NOT registered.
+			return []byte("worktree " + repo + "\nbranch refs/heads/main\n"), nil
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "remote get-url origin"):
+			return nil, errors.New("no origin")
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/one"):
+			return nil, &exec.ExitError{ProcessState: stubExitState(1)}
+		case strings.Contains(joined, "rev-parse --verify --quiet"):
+			return []byte("abc\n"), nil
+		case strings.Contains(joined, "worktree add"):
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	}
+	info, err := ws.Restore(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if info.Path != path {
+		t.Fatalf("info.Path = %q, want %q", info.Path, path)
+	}
+	if _, statErr := os.Stat(filepath.Join(path, "leftover.txt")); !os.IsNotExist(statErr) {
+		t.Fatalf("expected leftover.txt to be removed, stat err = %v", statErr)
+	}
+}
+
+func TestRestoreStillRefusesRegisteredResidue(t *testing.T) {
+	// Safety invariant: even if path is non-empty, if it IS a registered
+	// worktree we MUST NOT rmSync it (would destroy registered work).
+	// The findWorktree shortcut should catch this and return the registered
+	// info, never reaching the residue branch.
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "sess")
+	if err := mkdirFile(path, "agent-work.txt"); err != nil {
+		t.Fatalf("seed path: %v", err)
+	}
+	ws.run = func(context.Context, string, ...string) ([]byte, error) {
+		// Path IS registered — findWorktree shortcut should fire.
+		return []byte("worktree " + path + "\nbranch refs/heads/feature/one\n"), nil
+	}
+	info, err := ws.Restore(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if err != nil {
+		t.Fatalf("restore registered: %v", err)
+	}
+	if info.Branch != "feature/one" {
+		t.Fatalf("info.Branch = %q, want feature/one", info.Branch)
+	}
+	if _, statErr := os.Stat(filepath.Join(path, "agent-work.txt")); statErr != nil {
+		t.Fatalf("agent-work.txt MUST be preserved (data-loss guard): %v", statErr)
 	}
 }
 
