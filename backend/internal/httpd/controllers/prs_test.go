@@ -10,6 +10,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 )
 
@@ -36,30 +37,6 @@ func newPRTestServer(t *testing.T, svc prsvc.ActionManager) *httptest.Server {
 	return srv
 }
 
-func newPRTestServerNoService(t *testing.T) *httptest.Server {
-	t.Helper()
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := httptest.NewServer(httpd.NewRouter(config.Config{}, log, nil))
-	t.Cleanup(srv.Close)
-	return srv
-}
-
-// ---- Nil service → 501 ----
-
-func TestPRsRoutes_NilService_MergeReturns501(t *testing.T) {
-	srv := newPRTestServerNoService(t)
-	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/merge", "")
-	assertJSON(t, headers)
-	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
-}
-
-func TestPRsRoutes_NilService_ResolveCommentsReturns501(t *testing.T) {
-	srv := newPRTestServerNoService(t)
-	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/resolve-comments", "")
-	assertJSON(t, headers)
-	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
-}
-
 // ---- Merge: 200 ----
 
 func TestPRsRoutes_Merge_200(t *testing.T) {
@@ -84,7 +61,7 @@ func TestPRsRoutes_Merge_200(t *testing.T) {
 // ---- Merge: 404 ----
 
 func TestPRsRoutes_Merge_404(t *testing.T) {
-	svc := &fakePRService{mergeErr: prsvc.ErrPRNotFound}
+	svc := &fakePRService{mergeErr: controllers.ErrPRNotFound}
 	srv := newPRTestServer(t, svc)
 
 	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/99/merge", "")
@@ -95,7 +72,7 @@ func TestPRsRoutes_Merge_404(t *testing.T) {
 // ---- Merge: 409 ----
 
 func TestPRsRoutes_Merge_409(t *testing.T) {
-	svc := &fakePRService{mergeErr: prsvc.ErrPRNotMergeable}
+	svc := &fakePRService{mergeErr: controllers.ErrPRNotMergeable}
 	srv := newPRTestServer(t, svc)
 
 	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/merge", "")
@@ -106,7 +83,7 @@ func TestPRsRoutes_Merge_409(t *testing.T) {
 // ---- Merge: 422 ----
 
 func TestPRsRoutes_Merge_422(t *testing.T) {
-	svc := &fakePRService{mergeErr: prsvc.ErrPRPreconditions}
+	svc := &fakePRService{mergeErr: controllers.ErrPRPreconditions}
 	srv := newPRTestServer(t, svc)
 
 	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/merge", "")
@@ -147,7 +124,7 @@ func TestPRsRoutes_ResolveComments_200_NoBody(t *testing.T) {
 // ---- ResolveComments: 404 ----
 
 func TestPRsRoutes_ResolveComments_404(t *testing.T) {
-	svc := &fakePRService{resolveErr: prsvc.ErrPRNotFound}
+	svc := &fakePRService{resolveErr: controllers.ErrPRNotFound}
 	srv := newPRTestServer(t, svc)
 
 	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/99/resolve-comments", "")
@@ -158,28 +135,10 @@ func TestPRsRoutes_ResolveComments_404(t *testing.T) {
 // ---- ResolveComments: 422 ----
 
 func TestPRsRoutes_ResolveComments_422(t *testing.T) {
-	svc := &fakePRService{resolveErr: prsvc.ErrNothingToResolve}
+	svc := &fakePRService{resolveErr: controllers.ErrNothingToResolve}
 	srv := newPRTestServer(t, svc)
 
 	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/resolve-comments", "")
 	assertJSON(t, headers)
 	assertErrorCode(t, body, status, http.StatusUnprocessableEntity, "NOTHING_TO_RESOLVE")
-}
-
-// ---- 501 body includes spec slice ----
-
-func TestPRsRoutes_501BodyIncludesSpec(t *testing.T) {
-	srv := newPRTestServerNoService(t)
-	body, _, _ := doRequest(t, srv, "POST", "/api/v1/prs/1/merge", "")
-	var resp struct {
-		Code string         `json:"code"`
-		Spec map[string]any `json:"spec"`
-	}
-	mustJSON(t, body, &resp)
-	if resp.Code != "NOT_IMPLEMENTED" {
-		t.Fatalf("code = %q, want NOT_IMPLEMENTED", resp.Code)
-	}
-	if resp.Spec == nil {
-		t.Fatal("spec field missing from 501 body")
-	}
 }

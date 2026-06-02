@@ -15,10 +15,6 @@ import (
 )
 
 // APIDeps bundles every service the API layer's controllers depend on.
-// Controllers see only resource-level interfaces; they do not reach through to
-// lifecycle reducers, adapters, or storage. A nil dependency keeps its routes
-// registered but returns the OpenAPI-backed 501 response (SCM not configured,
-// sessions not wired, etc.).
 type APIDeps struct {
 	Projects projectsvc.Manager
 	Sessions controllers.SessionService
@@ -38,6 +34,10 @@ type API struct {
 // per-request timeout so the REST group can apply it without re-reading the
 // environment.
 func NewAPI(cfg config.Config, deps APIDeps) *API {
+	prSvc := deps.PRs
+	if prSvc == nil {
+		prSvc = prsvc.NewActionService()
+	}
 	return &API{
 		cfg: cfg,
 		projects: &controllers.ProjectsController{
@@ -46,7 +46,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		sessions: &controllers.SessionsController{
 			Svc: deps.Sessions,
 		},
-		prs: &controllers.PRsController{Svc: deps.PRs},
+		prs: &controllers.PRsController{Svc: prSvc},
 	}
 }
 
