@@ -296,9 +296,9 @@ func TestSessionInfoReadsHookMetadata(t *testing.T) {
 		WorkspacePath: "/some/path",
 		Metadata: map[string]string{
 			ports.MetadataKeyAgentSessionID: "thread-123",
-			codexTitleMetadataKey:          "Fix login redirect",
-			codexSummaryMetadataKey:        "Updated the auth callback and tests.",
-			"ignored":                      "not returned",
+			codexTitleMetadataKey:           "Fix login redirect",
+			codexSummaryMetadataKey:         "Updated the auth callback and tests.",
+			"ignored":                       "not returned",
 		},
 	})
 	if err != nil {
