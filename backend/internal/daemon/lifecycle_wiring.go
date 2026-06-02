@@ -9,9 +9,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/messenger/composite"
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/messenger/inbox"
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/messenger/panep"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -48,8 +45,7 @@ func (l *lifecycleStack) Stop() { <-l.reaperDone }
 // startSession builds the controller-facing session service: a session manager
 // over the real zellij runtime, a per-session gitworktree workspace, the shared
 // store + LCM, the per-session agent resolver (AO_AGENT default), and the
-// composite agent messenger (inbox file write + live zellij pane ping). The
-// returned service is mounted at httpd APIDeps.Sessions.
+// agent messenger. The returned service is mounted at httpd APIDeps.Sessions.
 func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, log *slog.Logger) (*sessionsvc.Service, error) {
 	agents, err := buildAgentResolver(cfg.Agent, log)
 	if err != nil {
@@ -79,48 +75,39 @@ func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store,
 	return sessionsvc.New(mgr, store), nil
 }
 
-// storeWorkspaceLookup adapts the sqlite store to the SessionWorkspace lookup
-// the inbox messenger needs. WorkspacePath becomes meaningful only after the
-// LCM records spawn metadata, so a session that exists but has no path is an
-// error — Send must not invent a destination.
-type storeWorkspaceLookup struct{ store *sqlite.Store }
-
-func (s storeWorkspaceLookup) WorkspacePath(ctx context.Context, id domain.SessionID) (string, error) {
-	rec, ok, err := s.store.GetSession(ctx, id)
-	if err != nil {
-		return "", err
-	}
-	if !ok {
-		return "", fmt.Errorf("session %s not found", id)
-	}
-	return rec.Metadata.WorkspacePath, nil
+// runtimeMessageSender is the narrow part of the concrete runtime needed by
+// ao send. zellij.Runtime already implements this via SendMessage.
+type runtimeMessageSender interface {
+	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
 }
 
-// storeSessionHandleLookup adapts the sqlite store to panep.SessionLookup.
-// panep needs the runtime handle id (to address the right zellij pane) and the
-// workspace path (proof the inbox messenger had a real directory to write to).
-type storeSessionHandleLookup struct{ store *sqlite.Store }
-
-func (s storeSessionHandleLookup) SessionHandle(ctx context.Context, id domain.SessionID) (string, string, error) {
-	rec, ok, err := s.store.GetSession(ctx, id)
-	if err != nil {
-		return "", "", err
-	}
-	if !ok {
-		return "", "", fmt.Errorf("session %s not found", id)
-	}
-	return rec.Metadata.RuntimeHandleID, rec.Metadata.WorkspacePath, nil
+// runtimeMessenger sends the user's message directly to the session's live
+// runtime pane. The HTTP controller has already validated and sanitized the
+// message body; this adapter only resolves the stored runtime handle.
+type runtimeMessenger struct {
+	store   *sqlite.Store
+	runtime runtimeMessageSender
 }
 
-// newSessionMessenger assembles the per-daemon agent messenger: inbox (durable
-// file write, primary) wrapped in a composite with panep (live pane ping,
-// best-effort secondary). Ordering matters — see composite.Messenger for the
-// "primary must succeed, secondaries are nudges" contract. Replaces the old
-// noopMessenger stub that silently dropped every agent nudge.
-func newSessionMessenger(store *sqlite.Store, runtime panep.RuntimePaneWriter, logger *slog.Logger) ports.AgentMessenger {
-	inboxMsg := inbox.New(storeWorkspaceLookup{store: store})
-	panepMsg := panep.New(runtime, storeSessionHandleLookup{store: store})
-	return composite.New([]ports.AgentMessenger{inboxMsg, panepMsg}, logger)
+func (m runtimeMessenger) Send(ctx context.Context, id domain.SessionID, message string) error {
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("session %s not found", id)
+	}
+	handleID := rec.Metadata.RuntimeHandleID
+	if handleID == "" {
+		return fmt.Errorf("session %s has no runtime handle", id)
+	}
+	return m.runtime.SendMessage(ctx, ports.RuntimeHandle{ID: handleID}, message)
+}
+
+// newSessionMessenger assembles the per-daemon agent messenger. For now, ao
+// send is intentionally minimal: submit the message to the live runtime pane.
+func newSessionMessenger(store *sqlite.Store, runtime runtimeMessageSender, _ *slog.Logger) ports.AgentMessenger {
+	return runtimeMessenger{store: store, runtime: runtime}
 }
 
 // buildAgentRegistry returns a registry populated with the agent adapters the

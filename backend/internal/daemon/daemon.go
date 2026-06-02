@@ -81,9 +81,8 @@ func Run() error {
 	// change_log -> poller -> broadcaster) and gives startSession the shared LCM.
 	lcStack := startLifecycle(ctx, store, runtimeAdapter, log)
 
-	// The agent messenger: inbox file write (durable, primary) composed with a
-	// live zellij pane ping (best-effort secondary). runtimeAdapter is the
-	// concrete zellij runtime, so it satisfies panep's RuntimePaneWriter seam.
+	// The agent messenger sends validated user input to the session's live
+	// zellij pane. Keep this path small until durable inbox semantics are needed.
 	messenger := newSessionMessenger(store, runtimeAdapter, log)
 
 	// Wire the controller-facing session service over the same store + LCM, the
