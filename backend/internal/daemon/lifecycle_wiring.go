@@ -4,21 +4,29 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/reaper"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
+	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
 // lifecycleStack owns the runtime reaper goroutine started with the lifecycle
 // reducer. The reducer itself is only used for wiring observations into storage.
 type lifecycleStack struct {
+	// LCM is the Lifecycle Manager (the canonical write path). It is exposed so
+	// startSession can share the same reducer the reaper drives, rather than
+	// standing up a second store+LCM pair that would diverge under writes.
+	LCM        *lifecycle.Manager
 	reaperDone <-chan struct{}
 }
 
@@ -27,12 +35,52 @@ type lifecycleStack struct {
 func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runtime, logger *slog.Logger) *lifecycleStack {
 	lcm := lifecycle.New(store, nil)
 	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
-	return &lifecycleStack{reaperDone: rp.Start(ctx)}
+	return &lifecycleStack{LCM: lcm, reaperDone: rp.Start(ctx)}
 }
 
 // Stop waits for the reaper goroutine to exit. The caller must cancel the ctx
 // passed to startLifecycle before calling Stop.
 func (l *lifecycleStack) Stop() { <-l.reaperDone }
+
+// noopMessenger is a stub ports.AgentMessenger: durable writes and notifications
+// work without it; only live agent nudges are absent until the runtime/agent
+// nudge path is wired.
+type noopMessenger struct{}
+
+func (noopMessenger) Send(context.Context, domain.SessionID, string) error { return nil }
+
+// startSession builds the controller-facing session service: a session manager
+// over the real zellij runtime, a per-session gitworktree workspace, the shared
+// store + LCM, and the per-session agent resolver (AO_AGENT default). The
+// Messenger is a stub until the live agent-nudge path lands. The returned
+// service is mounted at httpd APIDeps.Sessions.
+func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, log *slog.Logger) (*sessionsvc.Service, error) {
+	agents, err := buildAgentResolver(cfg.Agent, log)
+	if err != nil {
+		return nil, err
+	}
+	ws, err := gitworktree.New(gitworktree.Options{
+		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
+		// override moves all durable per-user state together.
+		ManagedRoot: filepath.Join(cfg.DataDir, "worktrees"),
+		// An empty resolver fails every project lookup with a clear
+		// "no repo configured for project" error until the projects table feeds
+		// repo paths in — better than silently misrouting spawns.
+		RepoResolver: gitworktree.StaticRepoResolver{},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("session workspace: %w", err)
+	}
+	mgr := sessionmanager.New(sessionmanager.Deps{
+		Runtime:   runtime,
+		Agents:    agents,
+		Workspace: ws,
+		Store:     store,
+		Messenger: noopMessenger{},
+		Lifecycle: lcm,
+	})
+	return sessionsvc.New(mgr, store), nil
+}
 
 // buildAgentRegistry returns a registry populated with the agent adapters the
 // daemon ships, keyed by manifest id. Registration only fails on an

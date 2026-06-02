@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -105,5 +106,29 @@ func TestWiring_AgentResolverResolvesRealAdapters(t *testing.T) {
 	}
 	if _, ok := resolver.Agent("definitely-not-an-agent"); ok {
 		t.Fatal("unknown harness resolved to an agent; want a miss")
+	}
+}
+
+// TestWiring_StartSessionBuildsSessionService asserts the daemon's startSession
+// constructs a real controller-facing session service end to end (resolver +
+// gitworktree workspace + session manager over the shared store/LCM), which is
+// what gets mounted at httpd APIDeps.Sessions.
+func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	lcm := lifecycle.New(store, nil)
+	cfg := config.Config{DataDir: t.TempDir()}
+
+	svc, err := startSession(cfg, zellij.New(zellij.Options{}), store, lcm, log)
+	if err != nil {
+		t.Fatalf("startSession: %v", err)
+	}
+	if svc == nil {
+		t.Fatal("startSession returned nil session service")
 	}
 }
