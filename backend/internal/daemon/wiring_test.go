@@ -5,11 +5,16 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/messenger/composite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/messenger/inbox"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/messenger/panep"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -126,12 +131,74 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	lcm := lifecycle.New(store, nil)
 	cfg := config.Config{DataDir: t.TempDir()}
 
-	svc, err := startSession(cfg, zellij.New(zellij.Options{}), store, lcm, log)
+	runtime := zellij.New(zellij.Options{})
+	messenger := newSessionMessenger(store, runtime, log)
+	svc, err := startSession(cfg, runtime, store, lcm, messenger, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
 	if svc == nil {
 		t.Fatal("startSession returned nil session service")
+	}
+}
+
+// TestWiring_SessionMessengerIsInboxThenPanepComposite asserts the daemon wires
+// the agent messenger as a composite of inbox (primary, durable file write)
+// then panep (secondary, live pane ping) — the ordering the "primary must
+// succeed, secondaries are nudges" contract depends on. It also proves the
+// messenger reaches the same store the SM reads: a Send through a row the store
+// owns lands an inbox file under that row's workspace. This is the switch that
+// replaced the old noopMessenger, which silently dropped every nudge.
+func TestWiring_SessionMessengerIsInboxThenPanepComposite(t *testing.T) {
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	runtime := zellij.New(zellij.Options{})
+	messenger := newSessionMessenger(store, runtime, nil)
+
+	comp, ok := messenger.(*composite.Messenger)
+	if !ok {
+		t.Fatalf("session messenger should be *composite.Messenger, got %T", messenger)
+	}
+	if len(comp.Inner) != 2 {
+		t.Fatalf("composite should wrap exactly 2 inner messengers (inbox + panep), got %d", len(comp.Inner))
+	}
+	if _, ok := comp.Inner[0].(*inbox.Messenger); !ok {
+		t.Errorf("composite Inner[0] should be *inbox.Messenger (primary), got %T", comp.Inner[0])
+	}
+	if _, ok := comp.Inner[1].(*panep.Messenger); !ok {
+		t.Errorf("composite Inner[1] should be *panep.Messenger (secondary), got %T", comp.Inner[1])
+	}
+
+	// End-to-end: a session row in the shared store is reachable through the
+	// messenger. A second store would surface as "session not found" here.
+	ctx := context.Background()
+	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "p", Path: "/repo/p", RegisteredAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	workspaceDir := t.TempDir()
+	rec, err := store.CreateSession(ctx, domain.SessionRecord{
+		ProjectID: "p", Kind: domain.KindWorker,
+		Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()},
+		Metadata: domain.SessionMetadata{WorkspacePath: workspaceDir},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// panep will fail (no live zellij pane), but it is best-effort: Send must
+	// still succeed because the inbox file write (primary) succeeded.
+	if err := messenger.Send(ctx, rec.ID, "hello agent"); err != nil {
+		t.Fatalf("messenger.Send through shared store lookup: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(workspaceDir, ".ao", "inbox"))
+	if err != nil {
+		t.Fatalf("inbox dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("want 1 inbox file, got %d", len(entries))
 	}
 }
 

@@ -9,6 +9,9 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/messenger/composite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/messenger/inbox"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/messenger/panep"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -42,19 +45,12 @@ func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runt
 // passed to startLifecycle before calling Stop.
 func (l *lifecycleStack) Stop() { <-l.reaperDone }
 
-// noopMessenger is a stub ports.AgentMessenger: durable writes and notifications
-// work without it; only live agent nudges are absent until the runtime/agent
-// nudge path is wired.
-type noopMessenger struct{}
-
-func (noopMessenger) Send(context.Context, domain.SessionID, string) error { return nil }
-
 // startSession builds the controller-facing session service: a session manager
 // over the real zellij runtime, a per-session gitworktree workspace, the shared
-// store + LCM, and the per-session agent resolver (AO_AGENT default). The
-// Messenger is a stub until the live agent-nudge path lands. The returned
-// service is mounted at httpd APIDeps.Sessions.
-func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, log *slog.Logger) (*sessionsvc.Service, error) {
+// store + LCM, the per-session agent resolver (AO_AGENT default), and the
+// composite agent messenger (inbox file write + live zellij pane ping). The
+// returned service is mounted at httpd APIDeps.Sessions.
+func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, log *slog.Logger) (*sessionsvc.Service, error) {
 	agents, err := buildAgentResolver(cfg.Agent, log)
 	if err != nil {
 		return nil, err
@@ -76,11 +72,55 @@ func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store,
 		Agents:    agents,
 		Workspace: ws,
 		Store:     store,
-		Messenger: noopMessenger{},
+		Messenger: messenger,
 		Lifecycle: lcm,
 		DataDir:   cfg.DataDir,
 	})
 	return sessionsvc.New(mgr, store), nil
+}
+
+// storeWorkspaceLookup adapts the sqlite store to the SessionWorkspace lookup
+// the inbox messenger needs. WorkspacePath becomes meaningful only after the
+// LCM records spawn metadata, so a session that exists but has no path is an
+// error — Send must not invent a destination.
+type storeWorkspaceLookup struct{ store *sqlite.Store }
+
+func (s storeWorkspaceLookup) WorkspacePath(ctx context.Context, id domain.SessionID) (string, error) {
+	rec, ok, err := s.store.GetSession(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("session %s not found", id)
+	}
+	return rec.Metadata.WorkspacePath, nil
+}
+
+// storeSessionHandleLookup adapts the sqlite store to panep.SessionLookup.
+// panep needs the runtime handle id (to address the right zellij pane) and the
+// workspace path (proof the inbox messenger had a real directory to write to).
+type storeSessionHandleLookup struct{ store *sqlite.Store }
+
+func (s storeSessionHandleLookup) SessionHandle(ctx context.Context, id domain.SessionID) (string, string, error) {
+	rec, ok, err := s.store.GetSession(ctx, id)
+	if err != nil {
+		return "", "", err
+	}
+	if !ok {
+		return "", "", fmt.Errorf("session %s not found", id)
+	}
+	return rec.Metadata.RuntimeHandleID, rec.Metadata.WorkspacePath, nil
+}
+
+// newSessionMessenger assembles the per-daemon agent messenger: inbox (durable
+// file write, primary) wrapped in a composite with panep (live pane ping,
+// best-effort secondary). Ordering matters — see composite.Messenger for the
+// "primary must succeed, secondaries are nudges" contract. Replaces the old
+// noopMessenger stub that silently dropped every agent nudge.
+func newSessionMessenger(store *sqlite.Store, runtime panep.RuntimePaneWriter, logger *slog.Logger) ports.AgentMessenger {
+	inboxMsg := inbox.New(storeWorkspaceLookup{store: store})
+	panepMsg := panep.New(runtime, storeSessionHandleLookup{store: store})
+	return composite.New([]ports.AgentMessenger{inboxMsg, panepMsg}, logger)
 }
 
 // buildAgentRegistry returns a registry populated with the agent adapters the
