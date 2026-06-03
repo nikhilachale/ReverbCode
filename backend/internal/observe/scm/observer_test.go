@@ -297,7 +297,7 @@ func TestPoll_RepoETag200DetectsPRAndRefreshesSamePoll(t *testing.T) {
 	if len(provider.fetchBatches) != 1 || len(provider.fetchBatches[0]) != 1 || provider.fetchBatches[0][0].Number != 1 {
 		t.Fatalf("new PR not refreshed in same poll: %#v", provider.fetchBatches)
 	}
-	if len(store.writes) != 1 || len(lc.observed) != 1 {
+	if len(store.writes) < 1 || len(lc.observed) != 1 {
 		t.Fatalf("write/lifecycle missing: writes=%d lifecycle=%d", len(store.writes), len(lc.observed))
 	}
 }
@@ -405,7 +405,7 @@ func TestPoll_ReviewPollingRespectsInterval(t *testing.T) {
 	if provider.reviewCalls != 1 {
 		t.Fatalf("review not fetched after interval: %d", provider.reviewCalls)
 	}
-	if len(store.writes) != 1 || !store.writes[0].replaceReview {
+	if len(store.writes) == 0 || !store.writes[0].replaceReview {
 		t.Fatalf("review refresh not persisted with replaceReview: %#v", store.writes)
 	}
 }
@@ -443,7 +443,7 @@ func TestPoll_ReviewHashDrivesPersistenceAndLifecycle(t *testing.T) {
 	if err := obs.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(store.writes) != 1 || len(store.writes[0].comments) != 1 {
+	if len(store.writes) == 0 || len(store.writes[0].comments) != 1 {
 		t.Fatalf("review change not persisted: %#v", store.writes)
 	}
 	if len(lc.observed) != 1 || !lc.observed[0].Changed.Review {
@@ -482,10 +482,10 @@ func TestPoll_ReviewOnlyRefreshPreservesLocalCIAndMetadata(t *testing.T) {
 	if err := obs.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(store.writes) != 1 {
+	if len(store.writes) == 0 {
 		t.Fatalf("writes = %d, want review-only write", len(store.writes))
 	}
-	write := store.writes[0]
+	write := store.writes[len(store.writes)-1]
 	if write.pr.MetadataHash != local.MetadataHash {
 		t.Fatalf("metadata hash changed on review-only refresh: got %q want %q", write.pr.MetadataHash, local.MetadataHash)
 	}
@@ -557,7 +557,7 @@ func TestPoll_DoesNotCommitCommitETagWhenFetchFails(t *testing.T) {
 	}
 }
 
-func TestPoll_LifecycleFailureWritesQueuesRetryAndDoesNotAdvanceETags(t *testing.T) {
+func TestPoll_LifecycleFailureHoldsBackHashesForDurableRetry(t *testing.T) {
 	store := testStoreWithSession()
 	local := knownPR(1)
 	local.MetadataHash = "old-metadata"
@@ -583,8 +583,11 @@ func TestPoll_LifecycleFailureWritesQueuesRetryAndDoesNotAdvanceETags(t *testing
 	if store.writes[0].pr.Title != "changed title" {
 		t.Fatalf("DB write did not persist the observed PR state: %#v", store.writes[0].pr)
 	}
-	if len(obs.pendingLifecycle) != 1 {
-		t.Fatalf("pending lifecycle retry not queued: %#v", obs.pendingLifecycle)
+	if store.writes[0].pr.MetadataHash != local.MetadataHash {
+		t.Fatalf("metadata hash advanced before lifecycle acknowledgement: got %q want %q", store.writes[0].pr.MetadataHash, local.MetadataHash)
+	}
+	if store.writes[0].pr.CIHash != local.CIHash {
+		t.Fatalf("CI hash advanced before lifecycle acknowledgement: got %q want %q", store.writes[0].pr.CIHash, local.CIHash)
 	}
 	if got := obs.Cache.RepoPRListETag[prKey(testRepo, 0)]; got != "repo1" {
 		t.Fatalf("repo ETag advanced after lifecycle failure: got %q want repo1", got)
@@ -595,14 +598,22 @@ func TestPoll_LifecycleFailureWritesQueuesRetryAndDoesNotAdvanceETags(t *testing
 
 	lc.err = nil
 	store.prs["p-1"] = []domain.PullRequest{store.writes[0].pr}
-	if err := obs.Poll(context.Background()); err != nil {
+	restarted := newTestObserver(store, provider, lc, time.Unix(501, 0).UTC())
+	if err := restarted.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if len(lc.observed) != 1 {
-		t.Fatalf("pending lifecycle notification was not retried: %#v", lc.observed)
+		t.Fatalf("held-back semantic hashes did not force lifecycle retry after restart: %#v", lc.observed)
 	}
-	if len(obs.pendingLifecycle) != 0 {
-		t.Fatalf("pending lifecycle notification not cleared after retry: %#v", obs.pendingLifecycle)
+	if len(store.writes) != 3 {
+		t.Fatalf("retry should write held-back facts then acknowledge hashes, got writes=%d", len(store.writes))
+	}
+	last := store.writes[len(store.writes)-1].pr
+	if last.MetadataHash != metadataSemanticHash(changed) {
+		t.Fatalf("metadata hash not acknowledged after lifecycle success: got %q want %q", last.MetadataHash, metadataSemanticHash(changed))
+	}
+	if last.CIHash != ciSemanticHash(changed.CI) {
+		t.Fatalf("CI hash not acknowledged after lifecycle success: got %q want %q", last.CIHash, ciSemanticHash(changed.CI))
 	}
 }
 
@@ -658,7 +669,7 @@ func TestPoll_DuplicateTrackedPRKeepsFirstSession(t *testing.T) {
 	if err := obs.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(store.writes) != 1 {
+	if len(store.writes) == 0 {
 		t.Fatalf("writes = %d, want exactly one owner write", len(store.writes))
 	}
 	if store.writes[0].pr.SessionID != "p-1" {

@@ -136,11 +136,6 @@ type Observer struct {
 	credentialsChecked bool
 	// disabled is set after the credential gate reports unavailable credentials.
 	disabled bool
-	// pendingLifecycle retries lifecycle side effects that failed after a
-	// successful DB write, so semantic hash equality cannot make us forget them.
-	pendingLifecycle map[string]pendingLifecycleNotification
-	// pendingLifecycleOrder tracks FIFO eviction order for pendingLifecycle.
-	pendingLifecycleOrder []string
 	// Cache holds bounded in-memory provider ETags and review poll timestamps.
 	Cache ObserverCache
 }
@@ -148,7 +143,7 @@ type Observer struct {
 // New constructs an Observer with default cadence/cache settings for zero
 // values in cfg.
 func New(provider Provider, store Store, lifecycle Lifecycle, cfg Config) *Observer {
-	o := &Observer{provider: provider, store: store, lifecycle: lifecycle, tick: cfg.Tick, reviewInterval: cfg.ReviewInterval, clock: cfg.Clock, logger: cfg.Logger, pendingLifecycle: map[string]pendingLifecycleNotification{}, Cache: newCache(cfg.CacheMax)}
+	o := &Observer{provider: provider, store: store, lifecycle: lifecycle, tick: cfg.Tick, reviewInterval: cfg.ReviewInterval, clock: cfg.Clock, logger: cfg.Logger, Cache: newCache(cfg.CacheMax)}
 	if o.tick <= 0 {
 		o.tick = DefaultTickInterval
 	}
@@ -220,15 +215,11 @@ type refreshSelection struct {
 }
 
 type persistenceOptions struct {
-	reviewFetched         bool
-	preserveLocalMetadata bool
-	preserveLocalCI       bool
-	preserveLocalReview   bool
-}
-
-type pendingLifecycleNotification struct {
-	sessionID domain.SessionID
-	obs       ports.SCMObservation
+	reviewFetched               bool
+	preserveLocalMetadataHash   bool
+	preserveLocalCIHash         bool
+	preserveLocalReviewHash     bool
+	preserveLocalReviewDecision bool
 }
 
 // Poll runs one synchronous SCM observation cycle.
@@ -252,10 +243,6 @@ func (o *Observer) Poll(ctx context.Context) error {
 	}
 	if o.disabled {
 		return nil
-	}
-	o.retryPendingLifecycle(ctx)
-	if err := ctx.Err(); err != nil {
-		return err
 	}
 
 	repoGuards := o.guardRepos(ctx, subjects)
@@ -341,17 +328,38 @@ func (o *Observer) Poll(ctx context.Context) error {
 		}
 		local := subj.known
 		opts := persistenceOptions{
-			reviewFetched:         reviewRefreshed[key],
-			preserveLocalMetadata: localOnlyObservations[key],
-			preserveLocalCI:       localOnlyObservations[key],
-			preserveLocalReview:   reviewStale[key],
+			reviewFetched:               reviewRefreshed[key],
+			preserveLocalMetadataHash:   localOnlyObservations[key],
+			preserveLocalCIHash:         localOnlyObservations[key],
+			preserveLocalReviewHash:     reviewStale[key],
+			preserveLocalReviewDecision: reviewStale[key],
 		}
 		prepared := o.prepareForPersistence(obs, local, opts, now)
 		if !prepared.Changed.Metadata && !prepared.Changed.CI && !prepared.Changed.Review {
 			prRefreshOK[key] = true
 			continue
 		}
-		pr, checks, threads, comments := domainFromObservation(subj.session.ID, prepared, local, opts, now)
+		finalPR, finalChecks, finalThreads, finalComments := domainFromObservation(subj.session.ID, prepared, local, opts, now)
+		pr, checks, threads, comments := finalPR, finalChecks, finalThreads, finalComments
+		// Lifecycle is allowed to run only after the observed facts are durable,
+		// but semantic hashes are the observer's acknowledgement cursor. Keep
+		// changed hashes at their local values until lifecycle succeeds; if the
+		// daemon restarts after a lifecycle failure, the stale hashes force the
+		// same observation to be fetched and delivered again.
+		holdHashes := o.lifecycle != nil
+		if holdHashes {
+			pendingOpts := opts
+			if prepared.Changed.Metadata {
+				pendingOpts.preserveLocalMetadataHash = true
+			}
+			if prepared.Changed.CI {
+				pendingOpts.preserveLocalCIHash = true
+			}
+			if prepared.Changed.Review {
+				pendingOpts.preserveLocalReviewHash = true
+			}
+			pr, checks, threads, comments = domainFromObservation(subj.session.ID, prepared, local, pendingOpts, now)
+		}
 		if err := o.store.WriteSCMObservation(ctx, pr, checks, threads, comments, reviewRefreshed[key]); err != nil {
 			o.logger.Error("scm observer: DB write failed", "session", subj.session.ID, "pr", pr.URL, "err", err)
 			markRepoRefreshFailed(subj.repo)
@@ -360,11 +368,16 @@ func (o *Observer) Poll(ctx context.Context) error {
 		if o.lifecycle != nil {
 			if err := o.lifecycle.ApplySCMObservation(ctx, subj.session.ID, prepared); err != nil {
 				o.logger.Error("scm observer: lifecycle notification failed", "session", subj.session.ID, "pr", firstNonEmpty(prepared.PR.URL, prepared.PR.HTMLURL, local.URL), "err", err)
-				o.queuePendingLifecycle(key, subj.session.ID, prepared)
 				markRepoRefreshFailed(subj.repo)
 				continue
 			}
-			o.deletePendingLifecycle(key)
+			if holdHashes {
+				if err := o.store.WriteSCMObservation(ctx, finalPR, finalChecks, finalThreads, finalComments, reviewRefreshed[key]); err != nil {
+					o.logger.Error("scm observer: DB lifecycle acknowledgement failed", "session", subj.session.ID, "pr", finalPR.URL, "err", err)
+					markRepoRefreshFailed(subj.repo)
+					continue
+				}
+			}
 		}
 		prRefreshOK[key] = true
 	}
@@ -413,44 +426,6 @@ func (o *Observer) checkCredentials(ctx context.Context) error {
 		o.logger.Warn("scm observer disabled: provider credentials unavailable")
 	}
 	return nil
-}
-
-func (o *Observer) retryPendingLifecycle(ctx context.Context) {
-	if o.lifecycle == nil || len(o.pendingLifecycle) == 0 {
-		return
-	}
-	for key, pending := range o.pendingLifecycle {
-		if err := ctx.Err(); err != nil {
-			return
-		}
-		if err := o.lifecycle.ApplySCMObservation(ctx, pending.sessionID, pending.obs); err != nil {
-			o.logger.Error("scm observer: pending lifecycle notification retry failed", "session", pending.sessionID, "pr", firstNonEmpty(pending.obs.PR.URL, pending.obs.PR.HTMLURL), "err", err)
-			continue
-		}
-		o.deletePendingLifecycle(key)
-	}
-}
-
-func (o *Observer) queuePendingLifecycle(key string, sessionID domain.SessionID, obs ports.SCMObservation) {
-	if key == "" {
-		key = prKeyFromObs(obs)
-	}
-	if key == "" {
-		key = string(sessionID) + ":" + firstNonEmpty(obs.PR.URL, obs.PR.HTMLURL)
-	}
-	if _, ok := o.pendingLifecycle[key]; !ok {
-		o.pendingLifecycleOrder = append(o.pendingLifecycleOrder, key)
-	}
-	o.pendingLifecycle[key] = pendingLifecycleNotification{sessionID: sessionID, obs: obs}
-	for len(o.pendingLifecycleOrder) > o.Cache.max {
-		evict := o.pendingLifecycleOrder[0]
-		o.pendingLifecycleOrder = o.pendingLifecycleOrder[1:]
-		delete(o.pendingLifecycle, evict)
-	}
-}
-
-func (o *Observer) deletePendingLifecycle(key string) {
-	delete(o.pendingLifecycle, key)
 }
 
 func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, error) {
@@ -769,15 +744,15 @@ func (o *Observer) needsReviewRefresh(key string, local domain.PullRequest, deci
 
 func (o *Observer) prepareForPersistence(obs ports.SCMObservation, local domain.PullRequest, opts persistenceOptions, now time.Time) ports.SCMObservation {
 	metadataHash := metadataSemanticHash(obs)
-	if opts.preserveLocalMetadata {
+	if opts.preserveLocalMetadataHash {
 		metadataHash = local.MetadataHash
 	}
 	ciHash := ciSemanticHash(obs.CI)
-	if opts.preserveLocalCI {
+	if opts.preserveLocalCIHash {
 		ciHash = local.CIHash
 	}
 	reviewHash := local.ReviewHash
-	if !opts.preserveLocalReview && (opts.reviewFetched || local.ReviewHash == "" || obs.Review.Decision != string(local.Review)) {
+	if !opts.preserveLocalReviewHash && (opts.reviewFetched || local.ReviewHash == "" || obs.Review.Decision != string(local.Review)) {
 		reviewHash = reviewSemanticHash(obs.Review)
 	}
 	obs.Changed = ports.SCMChanged{
@@ -792,17 +767,19 @@ func (o *Observer) prepareForPersistence(obs ports.SCMObservation, local domain.
 
 func domainFromObservation(sessionID domain.SessionID, obs ports.SCMObservation, local domain.PullRequest, opts persistenceOptions, now time.Time) (domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReviewThread, []domain.PullRequestComment) {
 	metadataHash := metadataSemanticHash(obs)
-	if opts.preserveLocalMetadata {
+	if opts.preserveLocalMetadataHash {
 		metadataHash = local.MetadataHash
 	}
 	ciHash := ciSemanticHash(obs.CI)
-	if opts.preserveLocalCI {
+	if opts.preserveLocalCIHash {
 		ciHash = local.CIHash
 	}
 	reviewHash := reviewSemanticHash(obs.Review)
 	reviewDecision := domain.ReviewDecision(firstNonEmpty(obs.Review.Decision, string(domain.ReviewNone)))
-	if opts.preserveLocalReview {
+	if opts.preserveLocalReviewDecision {
 		reviewDecision = local.Review
+	}
+	if opts.preserveLocalReviewHash {
 		reviewHash = local.ReviewHash
 	} else if !opts.reviewFetched && local.ReviewHash != "" && reviewDecision == local.Review {
 		reviewHash = local.ReviewHash
