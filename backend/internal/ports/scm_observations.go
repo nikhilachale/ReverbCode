@@ -4,7 +4,14 @@
 // GitHub payloads or GitHub-specific enum names.
 package ports
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// ErrSCMNotFound is the provider-neutral sentinel for successful SCM lookups
+// that found no matching resource, such as a branch with no open pull request.
+var ErrSCMNotFound = errors.New("scm: not found")
 
 // SCMRepo identifies a repository without assuming a provider-specific URL
 // shape. Repo is conventionally "owner/name" for providers that expose an

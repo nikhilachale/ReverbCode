@@ -341,11 +341,16 @@ func TestWritePRPreservesSCMReviewThreads(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	pr := domain.PullRequest{URL: "https://github.com/o/r/pull/1", SessionID: r.ID, Number: 1, UpdatedAt: now}
 	threads := []domain.PullRequestReviewThread{{ThreadID: "t1", Path: "main.go", Line: 7, SemanticHash: "thread-v1", UpdatedAt: now}}
+	comments := []domain.PullRequestComment{{ThreadID: "t1", ID: "c1", Author: "reviewer", Body: "scm", URL: "https://example/comment/c1", CreatedAt: now}}
 
-	if err := s.WriteSCMObservation(ctx, pr, nil, threads, nil, ports.ReviewWriteReplace); err != nil {
+	if err := s.WriteSCMObservation(ctx, pr, nil, threads, comments, ports.ReviewWriteReplace); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.WritePR(ctx, domain.PullRequest{URL: pr.URL, SessionID: r.ID, Number: 1, CI: domain.CIPassing, UpdatedAt: now.Add(time.Second)}, nil, nil); err != nil {
+	legacyComments := []domain.PullRequestComment{
+		{ID: "c1", Author: "legacy", Body: "duplicate legacy row must not clear thread metadata", CreatedAt: now.Add(time.Second)},
+		{ID: "legacy-only", Author: "legacy", Body: "legacy", CreatedAt: now.Add(time.Second)},
+	}
+	if err := s.WritePR(ctx, domain.PullRequest{URL: pr.URL, SessionID: r.ID, Number: 1, CI: domain.CIPassing, UpdatedAt: now.Add(time.Second)}, nil, legacyComments); err != nil {
 		t.Fatal(err)
 	}
 
@@ -355,6 +360,43 @@ func TestWritePRPreservesSCMReviewThreads(t *testing.T) {
 	}
 	if len(gotThreads) != 1 || gotThreads[0].ThreadID != "t1" || gotThreads[0].SemanticHash != "thread-v1" {
 		t.Fatalf("legacy WritePR must preserve SCM-owned review threads, got %+v", gotThreads)
+	}
+	gotComments, err := s.ListPRComments(ctx, pr.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]domain.PullRequestComment{}
+	for _, c := range gotComments {
+		byID[c.ID] = c
+	}
+	scmComment, ok := byID["c1"]
+	if !ok || scmComment.ThreadID != "t1" || scmComment.URL != "https://example/comment/c1" || scmComment.Body != "scm" {
+		t.Fatalf("legacy WritePR must not clear SCM comment metadata, got %+v", scmComment)
+	}
+	legacyOnly, ok := byID["legacy-only"]
+	if !ok || legacyOnly.ThreadID != "" {
+		t.Fatalf("legacy-only comment should remain unthreaded, got %+v", legacyOnly)
+	}
+
+	mergedThreads := []domain.PullRequestReviewThread{{ThreadID: "t1", Path: "main.go", Line: 8, Resolved: true, SemanticHash: "thread-v2", UpdatedAt: now.Add(2 * time.Second)}}
+	mergedComments := []domain.PullRequestComment{{ThreadID: "t1", ID: "c2", Author: "reviewer", Body: "updated", URL: "https://example/comment/c2", CreatedAt: now.Add(2 * time.Second)}}
+	if err := s.WriteSCMObservation(ctx, pr, nil, mergedThreads, mergedComments, ports.ReviewWriteMerge); err != nil {
+		t.Fatal(err)
+	}
+	gotComments, err = s.ListPRComments(ctx, pr.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID = map[string]domain.PullRequestComment{}
+	for _, c := range gotComments {
+		byID[c.ID] = c
+	}
+	if _, ok := byID["c1"]; ok {
+		t.Fatalf("SCM merge should delete stale fetched-thread comment c1, comments=%+v", gotComments)
+	}
+	replacement, ok := byID["c2"]
+	if !ok || replacement.ThreadID != "t1" {
+		t.Fatalf("SCM merge did not insert replacement threaded comment, comments=%+v", gotComments)
 	}
 }
 

@@ -10,6 +10,15 @@ import (
 	"time"
 )
 
+const deleteLegacyPRComments = `-- name: DeleteLegacyPRComments :exec
+DELETE FROM pr_comment WHERE pr_url = ? AND thread_id = ''
+`
+
+func (q *Queries) DeleteLegacyPRComments(ctx context.Context, prUrl string) error {
+	_, err := q.db.ExecContext(ctx, deleteLegacyPRComments, prUrl)
+	return err
+}
+
 const deletePRComments = `-- name: DeletePRComments :exec
 DELETE FROM pr_comment WHERE pr_url = ?
 `
@@ -30,6 +39,42 @@ type DeletePRCommentsByThreadParams struct {
 
 func (q *Queries) DeletePRCommentsByThread(ctx context.Context, arg DeletePRCommentsByThreadParams) error {
 	_, err := q.db.ExecContext(ctx, deletePRCommentsByThread, arg.PRURL, arg.ThreadID)
+	return err
+}
+
+const insertLegacyPRComment = `-- name: InsertLegacyPRComment :exec
+INSERT OR IGNORE INTO pr_comment (pr_url, comment_id, author, file, line, body, resolved, created_at, thread_id, url, is_bot)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`
+
+type InsertLegacyPRCommentParams struct {
+	PRURL     string
+	CommentID string
+	Author    string
+	File      string
+	Line      int64
+	Body      string
+	Resolved  bool
+	CreatedAt time.Time
+	ThreadID  string
+	URL       string
+	IsBot     int64
+}
+
+func (q *Queries) InsertLegacyPRComment(ctx context.Context, arg InsertLegacyPRCommentParams) error {
+	_, err := q.db.ExecContext(ctx, insertLegacyPRComment,
+		arg.PRURL,
+		arg.CommentID,
+		arg.Author,
+		arg.File,
+		arg.Line,
+		arg.Body,
+		arg.Resolved,
+		arg.CreatedAt,
+		arg.ThreadID,
+		arg.URL,
+		arg.IsBot,
+	)
 	return err
 }
 

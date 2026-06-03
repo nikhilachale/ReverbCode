@@ -71,8 +71,12 @@ func (s *Store) writePR(ctx context.Context, pr domain.PullRequest, checks []dom
 				return err
 			}
 		}
-		if reviewMode == ports.ReviewWriteReplace || replaceLegacyComments {
+		if reviewMode == ports.ReviewWriteReplace {
 			if err := q.DeletePRComments(ctx, pr.URL); err != nil {
+				return err
+			}
+		} else if replaceLegacyComments {
+			if err := q.DeleteLegacyPRComments(ctx, pr.URL); err != nil {
 				return err
 			}
 		}
@@ -90,10 +94,16 @@ func (s *Store) writePR(ctx context.Context, pr domain.PullRequest, checks []dom
 				}
 			}
 		}
-		if reviewMode == ports.ReviewWriteReplace || reviewMode == ports.ReviewWriteMerge || replaceLegacyComments {
+		if reviewMode == ports.ReviewWriteReplace || reviewMode == ports.ReviewWriteMerge {
 			for _, c := range comments {
 				if err := q.InsertPRComment(ctx, genCommentParams(pr.URL, c)); err != nil {
 					return fmt.Errorf("comment %q: %w", c.ID, err)
+				}
+			}
+		} else if replaceLegacyComments {
+			for _, c := range comments {
+				if err := q.InsertLegacyPRComment(ctx, genLegacyCommentParams(pr.URL, c)); err != nil {
+					return fmt.Errorf("legacy comment %q: %w", c.ID, err)
 				}
 			}
 		}
@@ -332,6 +342,14 @@ func genCommentParams(prURL string, c domain.PullRequestComment) gen.InsertPRCom
 		PRURL: prURL, CommentID: c.ID, Author: c.Author, File: c.File,
 		Line: int64(c.Line), Body: c.Body, Resolved: c.Resolved, CreatedAt: c.CreatedAt,
 		ThreadID: c.ThreadID, URL: c.URL, IsBot: boolInt(c.IsBot),
+	}
+}
+
+func genLegacyCommentParams(prURL string, c domain.PullRequestComment) gen.InsertLegacyPRCommentParams {
+	return gen.InsertLegacyPRCommentParams{
+		PRURL: prURL, CommentID: c.ID, Author: c.Author, File: c.File,
+		Line: int64(c.Line), Body: c.Body, Resolved: c.Resolved, CreatedAt: c.CreatedAt,
+		ThreadID: "", URL: "", IsBot: 0,
 	}
 }
 

@@ -534,7 +534,7 @@ func (o *Observer) detectMissingPRs(ctx context.Context, subjects map[string]*su
 		pr, err := o.provider.DetectPRByBranch(ctx, s.repo, s.branch)
 		if err != nil {
 			o.logger.Debug("scm observer: no PR detected for branch", "session", s.session.ID, "branch", s.branch, "err", err)
-			if markRepoFailed != nil {
+			if markRepoFailed != nil && !errors.Is(err, ports.ErrSCMNotFound) {
 				markRepoFailed(s.repo)
 			}
 			continue

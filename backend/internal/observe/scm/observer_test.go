@@ -138,7 +138,7 @@ func (p *fakeProvider) DetectPRByBranch(_ context.Context, _ ports.SCMRepo, bran
 	p.detectCalls++
 	pr, ok := p.detected[branch]
 	if !ok {
-		return ports.SCMPRObservation{}, errors.New("not found")
+		return ports.SCMPRObservation{}, ports.ErrSCMNotFound
 	}
 	return pr, nil
 }
@@ -275,6 +275,29 @@ func TestPoll_RepoETag304SkipsDetectPR(t *testing.T) {
 	}
 	if provider.detectCalls != 0 {
 		t.Fatalf("detectPR called on 304: %d", provider.detectCalls)
+	}
+}
+
+func TestPoll_DetectPRNotFoundCommitsRepoETag(t *testing.T) {
+	store := testStoreWithSession()
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "v2"}},
+		detected:     map[string]ports.SCMPRObservation{},
+		observations: map[string]ports.SCMObservation{},
+	}
+	obs := newTestObserver(store, provider, &fakeLifecycle{}, time.Unix(1, 0).UTC())
+	obs.Cache.RepoPRListETag[prKey(testRepo, 0)] = "v1"
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if provider.detectCalls != 1 {
+		t.Fatalf("detectPR calls = %d, want 1", provider.detectCalls)
+	}
+	if got := obs.Cache.RepoPRListETag[prKey(testRepo, 0)]; got != "v2" {
+		t.Fatalf("repo ETag after not-found detection = %q, want v2", got)
+	}
+	if len(provider.fetchBatches) != 0 {
+		t.Fatalf("not-found branch should not fetch PR batch: %#v", provider.fetchBatches)
 	}
 }
 
