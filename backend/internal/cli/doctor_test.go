@@ -102,26 +102,19 @@ func TestDoctorWarnsWhenZellijMissing(t *testing.T) {
 func TestDoctorChecksHarnessVersions(t *testing.T) {
 	setConfigEnv(t)
 	cmdPath := map[string]string{
-		"git":      "/bin/git",
-		"claude":   "/bin/claude",
-		"codex":    "/bin/codex",
-		"aider":    "/bin/aider",
-		"opencode": "/bin/opencode",
+		"git":    "/bin/git",
+		"claude": "/bin/claude",
+		"codex":  "/bin/codex",
 	}
 	c := doctorContext(t, cmdPath, func(_ context.Context, name string, args ...string) ([]byte, error) {
 		switch name {
 		case "/bin/git":
 			return []byte("git version 2.43.0\n"), nil
-		case "/bin/claude", "/bin/codex", "/bin/aider":
+		case "/bin/claude", "/bin/codex":
 			if len(args) != 1 || args[0] != "--version" {
 				t.Fatalf("unexpected harness command: %s %v", name, args)
 			}
 			return []byte(strings.TrimPrefix(name, "/bin/") + " 1.2.3\n"), nil
-		case "/bin/opencode":
-			if len(args) != 1 || args[0] != "version" {
-				t.Fatalf("unexpected opencode command: %s %v", name, args)
-			}
-			return []byte("opencode 0.9.0\n"), nil
 		default:
 			t.Fatalf("unexpected command: %s %v", name, args)
 			return nil, nil
@@ -129,7 +122,7 @@ func TestDoctorChecksHarnessVersions(t *testing.T) {
 	})
 
 	checks := c.runDoctor(context.Background())
-	for _, name := range []string{"claude-code", "codex", "aider", "opencode"} {
+	for _, name := range []string{"claude-code", "codex"} {
 		check := findDoctorCheck(t, checks, name)
 		if check.Level != doctorPass || !strings.Contains(check.Message, "resolves to") {
 			t.Fatalf("%s check = %+v, want PASS with path/version", name, check)
@@ -167,12 +160,12 @@ func TestDoctorWarnsWhenHarnessVersionFails(t *testing.T) {
 func TestDoctorChecksGitHubTokenFromEnv(t *testing.T) {
 	setConfigEnv(t)
 	srv := githubDoctorServer(t, http.StatusOK, `{"login":"octocat"}`, "repo, read:org")
-	defer overrideGitHubDoctorBase(t, srv.URL)()
 	c := doctorContext(t, map[string]string{"git": "/bin/git"}, func(context.Context, string, ...string) ([]byte, error) {
 		return []byte("git version 2.43.0\n"), nil
 	})
 	t.Setenv("AO_GITHUB_TOKEN", "env-token")
 	c.deps.HTTPClient = srv.Client()
+	c.deps.DoctorGitHubRESTBase = srv.URL
 
 	check := findDoctorCheck(t, c.runDoctor(context.Background()), "github-token")
 	if check.Level != doctorPass || !strings.Contains(check.Message, "AO_GITHUB_TOKEN") || !strings.Contains(check.Message, "repo, read:org") {
@@ -183,7 +176,6 @@ func TestDoctorChecksGitHubTokenFromEnv(t *testing.T) {
 func TestDoctorChecksGitHubTokenFromGHCLI(t *testing.T) {
 	setConfigEnv(t)
 	srv := githubDoctorServer(t, http.StatusOK, `{"login":"octocat"}`, "")
-	defer overrideGitHubDoctorBase(t, srv.URL)()
 	c := doctorContext(t, map[string]string{"git": "/bin/git", "gh": "/bin/gh"}, func(_ context.Context, name string, args ...string) ([]byte, error) {
 		if name == "/bin/gh" {
 			if len(args) != 2 || args[0] != "auth" || args[1] != "token" {
@@ -194,6 +186,7 @@ func TestDoctorChecksGitHubTokenFromGHCLI(t *testing.T) {
 		return []byte("git version 2.43.0\n"), nil
 	})
 	c.deps.HTTPClient = srv.Client()
+	c.deps.DoctorGitHubRESTBase = srv.URL
 
 	check := findDoctorCheck(t, c.runDoctor(context.Background()), "github-token")
 	if check.Level != doctorPass || !strings.Contains(check.Message, "gh token valid") {
@@ -216,12 +209,12 @@ func TestDoctorWarnsWhenGitHubTokenMissing(t *testing.T) {
 func TestDoctorFailsExpiredGitHubToken(t *testing.T) {
 	setConfigEnv(t)
 	srv := githubDoctorServer(t, http.StatusUnauthorized, `{"message":"Bad credentials"}`, "")
-	defer overrideGitHubDoctorBase(t, srv.URL)()
 	c := doctorContext(t, map[string]string{"git": "/bin/git"}, func(context.Context, string, ...string) ([]byte, error) {
 		return []byte("git version 2.43.0\n"), nil
 	})
 	t.Setenv("GITHUB_TOKEN", "expired-token")
 	c.deps.HTTPClient = srv.Client()
+	c.deps.DoctorGitHubRESTBase = srv.URL
 
 	check := findDoctorCheck(t, c.runDoctor(context.Background()), "github-token")
 	if check.Level != doctorFail || !strings.Contains(check.Message, "HTTP 401") {
@@ -288,6 +281,7 @@ func clearDoctorGitHubEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("AO_GITHUB_TOKEN", "")
 	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
 }
 
 func doctorContext(t *testing.T, paths map[string]string, commandOutput func(context.Context, string, ...string) ([]byte, error)) *commandContext {
@@ -325,13 +319,6 @@ func githubDoctorServer(t *testing.T, status int, body, scopes string) *httptest
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, body)
 	}))
-}
-
-func overrideGitHubDoctorBase(t *testing.T, base string) func() {
-	t.Helper()
-	prev := doctorGitHubRESTBase
-	doctorGitHubRESTBase = base
-	return func() { doctorGitHubRESTBase = prev }
 }
 
 func findDoctorCheck(t *testing.T, checks []doctorCheck, name string) doctorCheck {

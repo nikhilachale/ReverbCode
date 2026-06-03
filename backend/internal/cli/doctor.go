@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -40,15 +42,14 @@ type doctorReport struct {
 }
 
 const (
-	doctorSectionCore     = "Core"
-	doctorSectionTools    = "Tools"
-	doctorSectionAgents   = "Agent harnesses"
-	doctorSectionGitHub   = "GitHub"
-	minGitVersion         = "2.25.0"
-	githubDoctorUserAgent = "ao-agent-orchestrator/doctor"
+	doctorSectionCore           = "Core"
+	doctorSectionTools          = "Tools"
+	doctorSectionAgents         = "Agent harnesses"
+	doctorSectionGitHub         = "GitHub"
+	minGitVersion               = "2.25.0"
+	githubDoctorUserAgent       = "ao-agent-orchestrator/doctor"
+	defaultDoctorGitHubRESTBase = "https://api.github.com"
 )
-
-var doctorGitHubRESTBase = "https://api.github.com"
 
 type harnessProbe struct {
 	Name       string
@@ -59,8 +60,6 @@ type harnessProbe struct {
 var doctorHarnesses = []harnessProbe{
 	{Name: "claude-code", BinaryName: "claude", VersionArg: "--version"},
 	{Name: "codex", BinaryName: "codex", VersionArg: "--version"},
-	{Name: "aider", BinaryName: "aider", VersionArg: "--version"},
-	{Name: "opencode", BinaryName: "opencode", VersionArg: "version"},
 }
 
 func newDoctorCommand(ctx *commandContext) *cobra.Command {
@@ -237,7 +236,11 @@ func (c *commandContext) checkGit(ctx context.Context) doctorCheck {
 	if err != nil {
 		return doctorCheck{Level: doctorWarn, Section: doctorSectionTools, Name: "git", Message: fmt.Sprintf("%s (version unknown: %s)", path, firstOutputLine(out))}
 	}
-	if compareDottedVersion(version, minGitVersion) < 0 {
+	cmp, err := compareDottedVersion(version, minGitVersion)
+	if err != nil {
+		return doctorCheck{Level: doctorWarn, Section: doctorSectionTools, Name: "git", Message: fmt.Sprintf("%s (version unknown: %s)", path, firstOutputLine(out))}
+	}
+	if cmp < 0 {
 		return doctorCheck{Level: doctorWarn, Section: doctorSectionTools, Name: "git", Message: fmt.Sprintf("%s (version %s; AO expects >= %s for worktrees)", path, version, minGitVersion)}
 	}
 	return doctorCheck{Level: doctorPass, Section: doctorSectionTools, Name: "git", Message: fmt.Sprintf("%s (version %s; supports worktrees)", path, version)}
@@ -296,7 +299,7 @@ func (c *commandContext) checkGitHubToken(ctx context.Context) doctorCheck {
 
 	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, strings.TrimRight(doctorGitHubRESTBase, "/")+"/user", http.NoBody)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, strings.TrimRight(c.deps.DoctorGitHubRESTBase, "/")+"/user", http.NoBody)
 	if err != nil {
 		return doctorCheck{Level: doctorFail, Section: doctorSectionGitHub, Name: "github-token", Message: err.Error()}
 	}
@@ -308,7 +311,10 @@ func (c *commandContext) checkGitHubToken(ctx context.Context) doctorCheck {
 	if err != nil {
 		return doctorCheck{Level: doctorFail, Section: doctorSectionGitHub, Name: "github-token", Message: fmt.Sprintf("%s token validation failed: %v", source, err)}
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return doctorCheck{Level: doctorFail, Section: doctorSectionGitHub, Name: "github-token", Message: fmt.Sprintf("%s token rejected by GitHub (HTTP %d)", source, resp.StatusCode)}
@@ -381,9 +387,15 @@ func firstOutputLine(out []byte) string {
 	return strings.TrimSpace(line)
 }
 
-func compareDottedVersion(a, b string) int {
-	ap := dottedVersionParts(a)
-	bp := dottedVersionParts(b)
+func compareDottedVersion(a, b string) (int, error) {
+	ap, err := dottedVersionParts(a)
+	if err != nil {
+		return 0, err
+	}
+	bp, err := dottedVersionParts(b)
+	if err != nil {
+		return 0, err
+	}
 	maxLen := len(ap)
 	if len(bp) > maxLen {
 		maxLen = len(bp)
@@ -398,26 +410,26 @@ func compareDottedVersion(a, b string) int {
 		}
 		switch {
 		case av < bv:
-			return -1
+			return -1, nil
 		case av > bv:
-			return 1
+			return 1, nil
 		}
 	}
-	return 0
+	return 0, nil
 }
 
-func dottedVersionParts(s string) []int {
+func dottedVersionParts(s string) ([]int, error) {
 	raw := strings.Split(s, ".")
 	parts := make([]int, 0, len(raw))
 	for _, part := range raw {
-		n := 0
-		for _, ch := range part {
-			if ch < '0' || ch > '9' {
-				break
-			}
-			n = n*10 + int(ch-'0')
+		if part == "" {
+			return nil, fmt.Errorf("empty version segment in %q", s)
+		}
+		n, err := strconv.Atoi(part)
+		if err != nil {
+			return nil, fmt.Errorf("parse version segment %q in %q: %w", part, s, err)
 		}
 		parts = append(parts, n)
 	}
-	return parts
+	return parts, nil
 }
