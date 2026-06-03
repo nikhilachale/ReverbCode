@@ -136,6 +136,11 @@ type Observer struct {
 	credentialsChecked bool
 	// disabled is set after the credential gate reports unavailable credentials.
 	disabled bool
+	// pendingLifecycle retries lifecycle side effects that failed after a
+	// successful DB write, so semantic hash equality cannot make us forget them.
+	pendingLifecycle map[string]pendingLifecycleNotification
+	// pendingLifecycleOrder tracks FIFO eviction order for pendingLifecycle.
+	pendingLifecycleOrder []string
 	// Cache holds bounded in-memory provider ETags and review poll timestamps.
 	Cache ObserverCache
 }
@@ -143,7 +148,7 @@ type Observer struct {
 // New constructs an Observer with default cadence/cache settings for zero
 // values in cfg.
 func New(provider Provider, store Store, lifecycle Lifecycle, cfg Config) *Observer {
-	o := &Observer{provider: provider, store: store, lifecycle: lifecycle, tick: cfg.Tick, reviewInterval: cfg.ReviewInterval, clock: cfg.Clock, logger: cfg.Logger, Cache: newCache(cfg.CacheMax)}
+	o := &Observer{provider: provider, store: store, lifecycle: lifecycle, tick: cfg.Tick, reviewInterval: cfg.ReviewInterval, clock: cfg.Clock, logger: cfg.Logger, pendingLifecycle: map[string]pendingLifecycleNotification{}, Cache: newCache(cfg.CacheMax)}
 	if o.tick <= 0 {
 		o.tick = DefaultTickInterval
 	}
@@ -221,6 +226,11 @@ type persistenceOptions struct {
 	preserveLocalReview   bool
 }
 
+type pendingLifecycleNotification struct {
+	sessionID domain.SessionID
+	obs       ports.SCMObservation
+}
+
 // Poll runs one synchronous SCM observation cycle.
 func (o *Observer) Poll(ctx context.Context) error {
 	now := o.clock().UTC()
@@ -242,6 +252,10 @@ func (o *Observer) Poll(ctx context.Context) error {
 	}
 	if o.disabled {
 		return nil
+	}
+	o.retryPendingLifecycle(ctx)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	repoGuards := o.guardRepos(ctx, subjects)
@@ -337,18 +351,20 @@ func (o *Observer) Poll(ctx context.Context) error {
 			prRefreshOK[key] = true
 			continue
 		}
-		if o.lifecycle != nil {
-			if err := o.lifecycle.ApplySCMObservation(ctx, subj.session.ID, prepared); err != nil {
-				o.logger.Error("scm observer: lifecycle notification failed", "session", subj.session.ID, "pr", firstNonEmpty(prepared.PR.URL, prepared.PR.HTMLURL, local.URL), "err", err)
-				markRepoRefreshFailed(subj.repo)
-				continue
-			}
-		}
 		pr, checks, threads, comments := domainFromObservation(subj.session.ID, prepared, local, opts, now)
 		if err := o.store.WriteSCMObservation(ctx, pr, checks, threads, comments, reviewRefreshed[key]); err != nil {
 			o.logger.Error("scm observer: DB write failed", "session", subj.session.ID, "pr", pr.URL, "err", err)
 			markRepoRefreshFailed(subj.repo)
 			continue
+		}
+		if o.lifecycle != nil {
+			if err := o.lifecycle.ApplySCMObservation(ctx, subj.session.ID, prepared); err != nil {
+				o.logger.Error("scm observer: lifecycle notification failed", "session", subj.session.ID, "pr", firstNonEmpty(prepared.PR.URL, prepared.PR.HTMLURL, local.URL), "err", err)
+				o.queuePendingLifecycle(key, subj.session.ID, prepared)
+				markRepoRefreshFailed(subj.repo)
+				continue
+			}
+			o.deletePendingLifecycle(key)
 		}
 		prRefreshOK[key] = true
 	}
@@ -397,6 +413,44 @@ func (o *Observer) checkCredentials(ctx context.Context) error {
 		o.logger.Warn("scm observer disabled: provider credentials unavailable")
 	}
 	return nil
+}
+
+func (o *Observer) retryPendingLifecycle(ctx context.Context) {
+	if o.lifecycle == nil || len(o.pendingLifecycle) == 0 {
+		return
+	}
+	for key, pending := range o.pendingLifecycle {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		if err := o.lifecycle.ApplySCMObservation(ctx, pending.sessionID, pending.obs); err != nil {
+			o.logger.Error("scm observer: pending lifecycle notification retry failed", "session", pending.sessionID, "pr", firstNonEmpty(pending.obs.PR.URL, pending.obs.PR.HTMLURL), "err", err)
+			continue
+		}
+		o.deletePendingLifecycle(key)
+	}
+}
+
+func (o *Observer) queuePendingLifecycle(key string, sessionID domain.SessionID, obs ports.SCMObservation) {
+	if key == "" {
+		key = prKeyFromObs(obs)
+	}
+	if key == "" {
+		key = string(sessionID) + ":" + firstNonEmpty(obs.PR.URL, obs.PR.HTMLURL)
+	}
+	if _, ok := o.pendingLifecycle[key]; !ok {
+		o.pendingLifecycleOrder = append(o.pendingLifecycleOrder, key)
+	}
+	o.pendingLifecycle[key] = pendingLifecycleNotification{sessionID: sessionID, obs: obs}
+	for len(o.pendingLifecycleOrder) > o.Cache.max {
+		evict := o.pendingLifecycleOrder[0]
+		o.pendingLifecycleOrder = o.pendingLifecycleOrder[1:]
+		delete(o.pendingLifecycle, evict)
+	}
+}
+
+func (o *Observer) deletePendingLifecycle(key string) {
+	delete(o.pendingLifecycle, key)
 }
 
 func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, error) {
@@ -592,9 +646,13 @@ func (o *Observer) enrichFailureLogs(ctx context.Context, obs *ports.SCMObservat
 	}
 	tails := make([]string, 0, len(obs.CI.FailedChecks))
 	for i := range obs.CI.FailedChecks {
-		tail, err := o.provider.FetchFailedCheckLogTail(ctx, ports.SCMRepo{Provider: obs.Provider, Host: obs.Host, Repo: obs.Repo, Owner: ownerOf(obs.Repo), Name: nameOf(obs.Repo)}, obs.CI.FailedChecks[i])
-		if err != nil {
-			tail = "<log fetch failed: " + scrubLine(err.Error()) + ">"
+		tail := obs.CI.FailedChecks[i].LogTail
+		if obs.CI.FailedChecks[i].ProviderID != "" || tail == "" {
+			var err error
+			tail, err = o.provider.FetchFailedCheckLogTail(ctx, ports.SCMRepo{Provider: obs.Provider, Host: obs.Host, Repo: obs.Repo, Owner: ownerOf(obs.Repo), Name: nameOf(obs.Repo)}, obs.CI.FailedChecks[i])
+			if err != nil {
+				tail = "<log fetch failed: " + scrubLine(err.Error()) + ">"
+			}
 		}
 		obs.CI.FailedChecks[i].LogTail = tail
 		if tail != "" {

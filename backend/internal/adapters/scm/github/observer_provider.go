@@ -258,6 +258,11 @@ func scmObservationFromGraphQL(ref ports.SCMPRRef, pr map[string]any) ports.SCMO
 	checks := scmChecksFromGraphQL(pr)
 	failed := failedSCMChecks(checks)
 	ci := string(ciSummaryFromRollupState(pr))
+	prURL := firstNonEmpty(str(pr["url"]), ref.URL)
+	if ci == string(domain.CIFailing) && len(failed) == 0 && scmContextsPaginated(pr) {
+		failed = []ports.SCMCheckObservation{paginatedFailureSCMCheck(prURL)}
+		checks = append(checks, failed[0])
+	}
 	review := string(reviewDecisionFromGraphQL(pr))
 	providerMergeable := str(pr["mergeable"])
 	providerMergeState := str(pr["mergeStateStatus"])
@@ -270,7 +275,7 @@ func scmObservationFromGraphQL(ref ports.SCMPRRef, pr map[string]any) ports.SCMO
 		Host:     ref.Repo.Host,
 		Repo:     repoFullName(ref.Repo),
 		PR: ports.SCMPRObservation{
-			URL:                      firstNonEmpty(str(pr["url"]), ref.URL),
+			URL:                      prURL,
 			Number:                   int(num(pr["number"])),
 			State:                    normalizePRState(draft, merged, closed),
 			Draft:                    draft,
@@ -314,6 +319,23 @@ func ciSummaryFromRollupState(pr map[string]any) domain.CIState {
 		return domain.CIUnknown
 	}
 	return mapRollupState(str(roll["state"]))
+}
+
+func scmContextsPaginated(pr map[string]any) bool {
+	roll := statusRollup(pr)
+	contexts, _ := roll["contexts"].(map[string]any)
+	return pageInfoHasMore(contexts)
+}
+
+func paginatedFailureSCMCheck(prURL string) ports.SCMCheckObservation {
+	const msg = "GitHub reports failing CI, but this PR has more than 100 check/status contexts so the failing context is outside AO's first-page GraphQL view. Open the PR checks tab for the hidden failing job."
+	return ports.SCMCheckObservation{
+		Name:       "GitHub statusCheckRollup",
+		Status:     string(domain.PRCheckFailed),
+		Conclusion: "failure",
+		URL:        prURL,
+		LogTail:    msg,
+	}
 }
 
 func scmChecksFromGraphQL(pr map[string]any) []ports.SCMCheckObservation {

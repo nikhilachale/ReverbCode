@@ -557,7 +557,7 @@ func TestPoll_DoesNotCommitCommitETagWhenFetchFails(t *testing.T) {
 	}
 }
 
-func TestPoll_LifecycleFailureDoesNotWriteOrAdvanceETags(t *testing.T) {
+func TestPoll_LifecycleFailureWritesQueuesRetryAndDoesNotAdvanceETags(t *testing.T) {
 	store := testStoreWithSession()
 	local := knownPR(1)
 	local.MetadataHash = "old-metadata"
@@ -577,14 +577,32 @@ func TestPoll_LifecycleFailureDoesNotWriteOrAdvanceETags(t *testing.T) {
 	if err := obs.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(store.writes) != 0 {
-		t.Fatalf("write occurred before lifecycle accepted observation: %#v", store.writes)
+	if len(store.writes) != 1 {
+		t.Fatalf("DB write should succeed before lifecycle retry is queued, got writes=%#v", store.writes)
+	}
+	if store.writes[0].pr.Title != "changed title" {
+		t.Fatalf("DB write did not persist the observed PR state: %#v", store.writes[0].pr)
+	}
+	if len(obs.pendingLifecycle) != 1 {
+		t.Fatalf("pending lifecycle retry not queued: %#v", obs.pendingLifecycle)
 	}
 	if got := obs.Cache.RepoPRListETag[prKey(testRepo, 0)]; got != "repo1" {
 		t.Fatalf("repo ETag advanced after lifecycle failure: got %q want repo1", got)
 	}
 	if got := obs.Cache.CommitChecksETag[commitKey(testRepo, "sha1")]; got != "ci1" {
 		t.Fatalf("commit ETag advanced after lifecycle failure: got %q want ci1", got)
+	}
+
+	lc.err = nil
+	store.prs["p-1"] = []domain.PullRequest{store.writes[0].pr}
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(lc.observed) != 1 {
+		t.Fatalf("pending lifecycle notification was not retried: %#v", lc.observed)
+	}
+	if len(obs.pendingLifecycle) != 0 {
+		t.Fatalf("pending lifecycle notification not cleared after retry: %#v", obs.pendingLifecycle)
 	}
 }
 
