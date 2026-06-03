@@ -1166,7 +1166,7 @@ func TestSCMObservationUsesRollupStateWhenContextsPaginated(t *testing.T) {
 	if len(obs.CI.FailedChecks) != 1 {
 		t.Fatalf("failed checks should include a synthetic paginated failure, got %#v", obs.CI.FailedChecks)
 	}
-	if obs.CI.FailedChecks[0].Name != "GitHub statusCheckRollup" || !strings.Contains(obs.CI.FailedChecks[0].LogTail, "more than 100") {
+	if obs.CI.FailedChecks[0].Name != "GitHub statusCheckRollup" || !strings.Contains(obs.CI.FailedChecks[0].LogTail, "outside AO's current GraphQL check-context page") {
 		t.Fatalf("synthetic paginated failure missing actionable details: %#v", obs.CI.FailedChecks[0])
 	}
 }
@@ -1194,17 +1194,146 @@ func TestSCMMergeabilityBlocksReviewRequiredAndDraft(t *testing.T) {
 	}
 }
 
-func TestFetchReviewThreadsStopsAtPageLimit(t *testing.T) {
+func TestFetchPullRequestsDoesNotFallbackWhenContextPageComplete(t *testing.T) {
+	fake := newFakeGH(t)
+	fx := basePRFixture()
+	var pr map[string]any
+	fx.prData(func(m map[string]any) { pr = m })
+	fake.on(http.MethodPost, "/graphql", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if !strings.Contains(string(body), "contexts(first:20)") {
+			t.Fatalf("batch query should request 20 contexts, body=%s", body)
+		}
+		if !strings.Contains(string(body), "pageInfo{ hasNextPage endCursor }") {
+			t.Fatalf("batch query should request endCursor for fallback, body=%s", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{"pr0": map[string]any{"pullRequest": pr}},
+		})
+	})
+	p := newProviderForTest(t, fake)
+	obs, err := p.FetchPullRequests(ctx(), []ports.SCMPRRef{{Repo: ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "octocat", Name: "hello", Repo: "octocat/hello"}, Number: 42}})
+	if err != nil {
+		t.Fatalf("FetchPullRequests: %v", err)
+	}
+	if got := fake.callsTo(http.MethodPost, "/graphql"); got != 1 {
+		t.Fatalf("graphql calls = %d, want no fallback", got)
+	}
+	if len(obs) != 1 || len(obs[0].CI.Checks) != 1 || obs[0].CI.Summary != string(domain.CIPassing) {
+		t.Fatalf("observation = %#v", obs)
+	}
+}
+
+func TestFetchPullRequestsFetchesRemainingCheckContexts(t *testing.T) {
+	fake := newFakeGH(t)
+	fx := basePRFixture()
+	var pr map[string]any
+	fx.prData(func(m map[string]any) {
+		pr = m
+		commits := m["commits"].(map[string]any)["nodes"].([]any)[0].(map[string]any)
+		commit := commits["commit"].(map[string]any)
+		roll := commit["statusCheckRollup"].(map[string]any)
+		roll["state"] = "FAILURE"
+		ctxs := roll["contexts"].(map[string]any)
+		ctxs["nodes"] = []any{
+			map[string]any{"__typename": "CheckRun", "name": "visible-pass", "status": "COMPLETED", "conclusion": "SUCCESS"},
+		}
+		ctxs["pageInfo"] = map[string]any{"hasNextPage": true, "endCursor": "cursor-1"}
+	})
+	fake.on(http.MethodPost, "/graphql", func(w http.ResponseWriter, r *http.Request) {
+		call := fake.callsTo(http.MethodPost, "/graphql")
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		switch call {
+		case 1:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"pr0": map[string]any{"pullRequest": pr}},
+			})
+		case 2:
+			if !strings.Contains(string(body), `after:\"cursor-1\"`) && !strings.Contains(string(body), `after:"cursor-1"`) {
+				t.Fatalf("fallback query missing cursor, body=%s", body)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"repo": map[string]any{"pullRequest": map[string]any{
+					"commits": map[string]any{"nodes": []any{map[string]any{"commit": map[string]any{"statusCheckRollup": map[string]any{
+						"contexts": map[string]any{
+							"nodes": []any{
+								map[string]any{"__typename": "CheckRun", "name": "hidden-fail", "status": "COMPLETED", "conclusion": "FAILURE"},
+							},
+							"pageInfo": map[string]any{"hasNextPage": false, "endCursor": nil},
+						},
+					}}}}},
+				}}},
+			})
+		default:
+			t.Fatalf("unexpected graphql call %d", call)
+		}
+	})
+	p := newProviderForTest(t, fake)
+	obs, err := p.FetchPullRequests(ctx(), []ports.SCMPRRef{{Repo: ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "octocat", Name: "hello", Repo: "octocat/hello"}, Number: 42}})
+	if err != nil {
+		t.Fatalf("FetchPullRequests: %v", err)
+	}
+	if got := fake.callsTo(http.MethodPost, "/graphql"); got != 2 {
+		t.Fatalf("graphql calls = %d, want batch + fallback", got)
+	}
+	if len(obs) != 1 {
+		t.Fatalf("observations = %#v", obs)
+	}
+	if obs[0].CI.Summary != string(domain.CIFailing) {
+		t.Fatalf("CI summary = %q, want aggregate failing", obs[0].CI.Summary)
+	}
+	if len(obs[0].CI.Checks) != 2 || len(obs[0].CI.FailedChecks) != 1 || obs[0].CI.FailedChecks[0].Name != "hidden-fail" {
+		t.Fatalf("checks not completed from fallback: %#v failed=%#v", obs[0].CI.Checks, obs[0].CI.FailedChecks)
+	}
+}
+
+func TestFetchPullRequestsFailsWhenCheckContextFallbackFails(t *testing.T) {
+	fake := newFakeGH(t)
+	fx := basePRFixture()
+	var pr map[string]any
+	fx.prData(func(m map[string]any) {
+		pr = m
+		commits := m["commits"].(map[string]any)["nodes"].([]any)[0].(map[string]any)
+		commit := commits["commit"].(map[string]any)
+		ctxs := commit["statusCheckRollup"].(map[string]any)["contexts"].(map[string]any)
+		ctxs["pageInfo"] = map[string]any{"hasNextPage": true, "endCursor": "cursor-1"}
+	})
+	fake.on(http.MethodPost, "/graphql", func(w http.ResponseWriter, r *http.Request) {
+		call := fake.callsTo(http.MethodPost, "/graphql")
+		if call == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"pr0": map[string]any{"pullRequest": pr}},
+			})
+			return
+		}
+		http.Error(w, `{"message":"graphql down"}`, http.StatusInternalServerError)
+	})
+	p := newProviderForTest(t, fake)
+	if _, err := p.FetchPullRequests(ctx(), []ports.SCMPRRef{{Repo: ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "octocat", Name: "hello", Repo: "octocat/hello"}, Number: 42}}); err == nil {
+		t.Fatal("FetchPullRequests error = nil, want fallback failure")
+	}
+}
+
+func TestFetchReviewThreadsUsesLatestWindowWithoutFallbackWhenOldestResolved(t *testing.T) {
 	fake := newFakeGH(t)
 	fake.on(http.MethodPost, "/graphql", func(w http.ResponseWriter, r *http.Request) {
-		page := fake.callsTo(http.MethodPost, "/graphql")
+		body, _ := io.ReadAll(r.Body)
+		if !strings.Contains(string(body), "reviewThreads(last:50, before:null)") {
+			t.Fatalf("review query should fetch latest 50, body=%s", body)
+		}
+		if !strings.Contains(string(body), "comments(first:5)") {
+			t.Fatalf("review query should cap comments per thread, body=%s", body)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]any{"repo": map[string]any{"pullRequest": map[string]any{
 				"reviewDecision": "CHANGES_REQUESTED",
 				"reviewThreads": map[string]any{
-					"nodes":    []any{map[string]any{"id": "thread-" + strconv.Itoa(page), "path": "main.go", "line": page, "isResolved": false, "comments": map[string]any{"nodes": []any{}}}},
-					"pageInfo": map[string]any{"hasNextPage": true, "endCursor": "cursor-" + strconv.Itoa(page)},
+					"nodes":    []any{map[string]any{"id": "latest-resolved", "path": "main.go", "line": 1, "isResolved": true, "comments": map[string]any{"nodes": []any{}}}},
+					"pageInfo": map[string]any{"hasPreviousPage": true, "startCursor": "latest-start"},
 				},
 			}}},
 		})
@@ -1214,10 +1343,63 @@ func TestFetchReviewThreadsStopsAtPageLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchReviewThreads: %v", err)
 	}
+	if got := fake.callsTo(http.MethodPost, "/graphql"); got != 1 {
+		t.Fatalf("graphql calls = %d, want no fallback when oldest latest thread is resolved", got)
+	}
+	if !review.Partial {
+		t.Fatalf("review Partial = false, want true because older pages exist")
+	}
+	if len(review.Threads) != 1 || review.Threads[0].ID != "latest-resolved" {
+		t.Fatalf("threads = %#v", review.Threads)
+	}
+}
+
+func TestFetchReviewThreadsFetchesOneOlderPageWhenOldestUnresolved(t *testing.T) {
+	fake := newFakeGH(t)
+	fake.on(http.MethodPost, "/graphql", func(w http.ResponseWriter, r *http.Request) {
+		call := fake.callsTo(http.MethodPost, "/graphql")
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		switch call {
+		case 1:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"repo": map[string]any{"pullRequest": map[string]any{
+					"reviewDecision": "CHANGES_REQUESTED",
+					"reviewThreads": map[string]any{
+						"nodes":    []any{map[string]any{"id": "latest-unresolved", "path": "main.go", "line": 2, "isResolved": false, "comments": map[string]any{"nodes": []any{}}}},
+						"pageInfo": map[string]any{"hasPreviousPage": true, "startCursor": "latest-start"},
+					},
+				}}},
+			})
+		case 2:
+			if !strings.Contains(string(body), `before:\"latest-start\"`) && !strings.Contains(string(body), `before:"latest-start"`) {
+				t.Fatalf("older review query missing before cursor, body=%s", body)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"repo": map[string]any{"pullRequest": map[string]any{
+					"reviewDecision": "CHANGES_REQUESTED",
+					"reviewThreads": map[string]any{
+						"nodes":    []any{map[string]any{"id": "older", "path": "old.go", "line": 1, "isResolved": false, "comments": map[string]any{"nodes": []any{}}}},
+						"pageInfo": map[string]any{"hasPreviousPage": true, "startCursor": "older-start"},
+					},
+				}}},
+			})
+		default:
+			t.Fatalf("unexpected graphql call %d", call)
+		}
+	})
+	p := newProviderForTest(t, fake)
+	review, err := p.FetchReviewThreads(ctx(), ports.SCMPRRef{Repo: ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "o", Name: "r", Repo: "o/r"}, Number: 1})
+	if err != nil {
+		t.Fatalf("FetchReviewThreads: %v", err)
+	}
 	if got := fake.callsTo(http.MethodPost, "/graphql"); got != githubReviewThreadMaxPages {
 		t.Fatalf("graphql calls = %d, want capped at %d", got, githubReviewThreadMaxPages)
 	}
-	if len(review.Threads) != githubReviewThreadMaxPages {
-		t.Fatalf("threads = %d, want %d", len(review.Threads), githubReviewThreadMaxPages)
+	if !review.Partial {
+		t.Fatalf("review Partial = false, want true because pagination remains bounded")
+	}
+	if len(review.Threads) != 2 || review.Threads[0].ID != "older" || review.Threads[1].ID != "latest-unresolved" {
+		t.Fatalf("threads order = %#v", review.Threads)
 	}
 }

@@ -35,18 +35,19 @@ var (
 // not touch pr_review_threads: those rows are owned by WriteSCMObservation's
 // slower review-thread refresh path.
 func (s *Store) WritePR(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, comments []domain.PullRequestComment) error {
-	return s.writePR(ctx, pr, checks, nil, comments, false, true)
+	return s.writePR(ctx, pr, checks, nil, comments, ports.ReviewWritePreserve, true)
 }
 
 // WriteSCMObservation persists a provider-neutral SCM observation in one write
 // transaction. It upserts the full PR metadata row and CI checks. Review threads
-// and comments are replaced only when replaceReview is true, because review
-// polling runs at a slower cadence than metadata/CI polling.
-func (s *Store) WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, replaceReview bool) error {
-	return s.writePR(ctx, pr, checks, threads, comments, replaceReview, replaceReview)
+// and comments are preserved, replaced, or merged according to reviewMode
+// because review polling runs at a slower and sometimes intentionally bounded
+// cadence than metadata/CI polling.
+func (s *Store) WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode) error {
+	return s.writePR(ctx, pr, checks, threads, comments, reviewMode, false)
 }
 
-func (s *Store) writePR(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, replaceThreads, replaceComments bool) error {
+func (s *Store) writePR(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode, replaceLegacyComments bool) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.inTx(ctx, "write pr observation", func(q *gen.Queries) error {
@@ -65,24 +66,31 @@ func (s *Store) writePR(ctx context.Context, pr domain.PullRequest, checks []dom
 				return err
 			}
 		}
-		if replaceThreads {
+		if reviewMode == ports.ReviewWriteReplace {
 			if err := q.DeletePRReviewThreads(ctx, pr.URL); err != nil {
 				return err
 			}
 		}
-		if replaceComments {
+		if reviewMode == ports.ReviewWriteReplace || replaceLegacyComments {
 			if err := q.DeletePRComments(ctx, pr.URL); err != nil {
 				return err
 			}
 		}
-		if replaceThreads {
+		if reviewMode == ports.ReviewWriteReplace || reviewMode == ports.ReviewWriteMerge {
 			for _, th := range threads {
 				if err := q.UpsertPRReviewThread(ctx, genReviewThreadParams(pr.URL, th)); err != nil {
 					return fmt.Errorf("review thread %q: %w", th.ThreadID, err)
 				}
 			}
 		}
-		if replaceComments {
+		if reviewMode == ports.ReviewWriteMerge {
+			for _, threadID := range reviewThreadIDs(threads, comments) {
+				if err := q.DeletePRCommentsByThread(ctx, gen.DeletePRCommentsByThreadParams{PRURL: pr.URL, ThreadID: threadID}); err != nil {
+					return fmt.Errorf("delete comments for review thread %q: %w", threadID, err)
+				}
+			}
+		}
+		if reviewMode == ports.ReviewWriteReplace || reviewMode == ports.ReviewWriteMerge || replaceLegacyComments {
 			for _, c := range comments {
 				if err := q.InsertPRComment(ctx, genCommentParams(pr.URL, c)); err != nil {
 					return fmt.Errorf("comment %q: %w", c.ID, err)
@@ -91,6 +99,26 @@ func (s *Store) writePR(ctx context.Context, pr domain.PullRequest, checks []dom
 		}
 		return nil
 	})
+}
+
+func reviewThreadIDs(threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(threads))
+	for _, th := range threads {
+		if th.ThreadID == "" || seen[th.ThreadID] {
+			continue
+		}
+		seen[th.ThreadID] = true
+		out = append(out, th.ThreadID)
+	}
+	for _, c := range comments {
+		if c.ThreadID == "" || seen[c.ThreadID] {
+			continue
+		}
+		seen[c.ThreadID] = true
+		out = append(out, c.ThreadID)
+	}
+	return out
 }
 
 // GetPR returns the PR facts for a URL, or ok=false if absent.

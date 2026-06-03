@@ -79,6 +79,7 @@ type UpsertPRReviewThreadParams struct {
 	UpdatedAt    time.Time
 }
 
+// Summary: SQLC queries for replacing and reading normalized PR review threads.
 func (q *Queries) UpsertPRReviewThread(ctx context.Context, arg UpsertPRReviewThreadParams) error {
 	_, err := q.db.ExecContext(ctx, upsertPRReviewThread,
 		arg.PRURL,

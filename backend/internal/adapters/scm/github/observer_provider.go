@@ -21,12 +21,19 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-const scmBatchCheckContextLimit = 100
+const scmBatchCheckContextLimit = 20
 
-// githubReviewThreadMaxPages bounds a single review-thread refresh. GitHub
-// returns 100 threads per page, so this permits up to 5000 threads while keeping
-// one poll from allocating unbounded memory or issuing unlimited GraphQL calls.
-const githubReviewThreadMaxPages = 50
+const (
+	// githubReviewThreadPageSize fetches the latest review window cheaply for
+	// the common case while still covering active review feedback.
+	githubReviewThreadPageSize = 50
+	// githubReviewCommentLimitPerThread stores only the leading comments needed
+	// to understand a thread without making one pathological thread dominate
+	// GraphQL cost.
+	githubReviewCommentLimitPerThread = 5
+	// githubReviewThreadMaxPages bounds the explicit older-thread fallback.
+	githubReviewThreadMaxPages = 2
+)
 
 // ParseRepository normalizes a GitHub remote/origin URL into a provider-neutral
 // repository key. It accepts https://github.com/owner/repo(.git),
@@ -118,6 +125,11 @@ func (p *Provider) FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef)
 		if pr == nil {
 			continue
 		}
+		if scmContextsPaginated(pr) {
+			if err := p.fetchRemainingCheckContexts(ctx, ref, pr); err != nil {
+				return nil, err
+			}
+		}
 		out = append(out, scmObservationFromGraphQL(ref, pr))
 	}
 	return out, nil
@@ -144,41 +156,36 @@ func (p *Provider) FetchFailedCheckLogTail(ctx context.Context, repo ports.SCMRe
 
 // FetchReviewThreads fetches review threads separately from the fast PR/CI path.
 func (p *Provider) FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (ports.SCMReviewObservation, error) {
-	var all []ports.SCMReviewThreadObservation
-	var decision string
-	var cursor string
-	for page := 0; page < githubReviewThreadMaxPages; page++ {
-		query := buildReviewThreadsQuery(ref, cursor)
-		data, err := p.client.doGraphQL(ctx, query, nil)
-		if err != nil {
-			return ports.SCMReviewObservation{}, err
-		}
-		repoData, _ := data["repo"].(map[string]any)
-		pr, _ := repoData["pullRequest"].(map[string]any)
-		if pr == nil {
-			return ports.SCMReviewObservation{}, fmt.Errorf("%w: pull request not found in review response", ErrNotFound)
-		}
-		decision = string(reviewDecisionFromGraphQL(pr))
-		threads, _ := pr["reviewThreads"].(map[string]any)
-		for _, th := range nodes(threads["nodes"]) {
-			all = append(all, scmThreadFromGraphQL(th))
-		}
-		pi, _ := threads["pageInfo"].(map[string]any)
-		if !boolv(pi["hasNextPage"]) {
-			break
-		}
-		cursor = str(pi["endCursor"])
-		if cursor == "" {
-			break
-		}
-		if page == githubReviewThreadMaxPages-1 {
-			p.logger.Warn("github scm: review thread page limit reached",
-				"repo", repoFullName(ref.Repo), "pr", ref.Number,
-				"max_pages", githubReviewThreadMaxPages)
-			break
+	latest, decision, pi, err := p.fetchReviewThreadPage(ctx, ref, "")
+	if err != nil {
+		return ports.SCMReviewObservation{}, err
+	}
+	if !boolv(pi["hasPreviousPage"]) {
+		return ports.SCMReviewObservation{Decision: decision, Threads: latest}, nil
+	}
+	out := latest
+	startCursor := str(pi["startCursor"])
+	if len(latest) == 0 || !latest[0].Resolved {
+		if startCursor == "" {
+			p.logger.Warn("github scm: review thread page is partial but missing start cursor",
+				"repo", repoFullName(ref.Repo), "pr", ref.Number)
+		} else {
+			older, _, olderPI, err := p.fetchReviewThreadPage(ctx, ref, startCursor)
+			if err != nil {
+				return ports.SCMReviewObservation{}, err
+			}
+			combined := make([]ports.SCMReviewThreadObservation, 0, len(older)+len(latest))
+			combined = append(combined, older...)
+			combined = append(combined, latest...)
+			out = combined
+			if boolv(olderPI["hasPreviousPage"]) {
+				p.logger.Warn("github scm: review thread page limit reached",
+					"repo", repoFullName(ref.Repo), "pr", ref.Number,
+					"max_pages", githubReviewThreadMaxPages)
+			}
 		}
 	}
-	return ports.SCMReviewObservation{Decision: decision, Threads: all}, nil
+	return ports.SCMReviewObservation{Decision: decision, Threads: out, Partial: true}, nil
 }
 
 type restListPull struct {
@@ -250,8 +257,82 @@ commits(last:1){ nodes{ commit{ oid statusCheckRollup{ state contexts(first:CONT
   __typename
   ... on CheckRun { name status conclusion detailsUrl url databaseId }
   ... on StatusContext { context state targetUrl }
-} pageInfo{ hasNextPage } } } } } }
+} pageInfo{ hasNextPage endCursor } } } } } }
 `, "CONTEXT_LIMIT", strconv.Itoa(scmBatchCheckContextLimit))
+}
+
+func (p *Provider) fetchRemainingCheckContexts(ctx context.Context, ref ports.SCMPRRef, pr map[string]any) error {
+	contexts := statusContexts(pr)
+	if contexts == nil {
+		return nil
+	}
+	cursor := pageInfoEndCursor(contexts)
+	if cursor == "" {
+		return fmt.Errorf("github scm: paginated check contexts for %s#%d missing end cursor", repoFullName(ref.Repo), ref.Number)
+	}
+	for {
+		query := buildCheckContextsQuery(ref, cursor)
+		data, err := p.client.doGraphQL(ctx, query, nil)
+		if err != nil {
+			return fmt.Errorf("github scm: fetch remaining check contexts for %s#%d: %w", repoFullName(ref.Repo), ref.Number, err)
+		}
+		repoData, _ := data["repo"].(map[string]any)
+		pagePR, _ := repoData["pullRequest"].(map[string]any)
+		if pagePR == nil {
+			return fmt.Errorf("%w: pull request not found in check context response", ErrNotFound)
+		}
+		pageContexts := statusContexts(pagePR)
+		if pageContexts == nil {
+			return fmt.Errorf("github scm: check context fallback for %s#%d returned no contexts", repoFullName(ref.Repo), ref.Number)
+		}
+		appendStatusContextNodes(contexts, pageContexts)
+		if !pageInfoHasMore(pageContexts) {
+			break
+		}
+		cursor = pageInfoEndCursor(pageContexts)
+		if cursor == "" {
+			return fmt.Errorf("github scm: paginated check context page for %s#%d missing end cursor", repoFullName(ref.Repo), ref.Number)
+		}
+	}
+	return nil
+}
+
+func buildCheckContextsQuery(ref ports.SCMPRRef, cursor string) string {
+	return fmt.Sprintf(`query{
+repo: repository(owner:%s,name:%s){ pullRequest(number:%d){
+  commits(last:1){ nodes{ commit{ statusCheckRollup{ contexts(first:%d, after:%s){ nodes{
+    __typename
+    ... on CheckRun { name status conclusion detailsUrl url databaseId }
+    ... on StatusContext { context state targetUrl }
+  } pageInfo{ hasNextPage endCursor } } } } } }
+} }
+}`, graphQLString(ref.Repo.Owner), graphQLString(ref.Repo.Name), ref.Number, scmBatchCheckContextLimit, graphQLString(cursor))
+}
+
+func statusContexts(pr map[string]any) map[string]any {
+	roll := statusRollup(pr)
+	if roll == nil {
+		return nil
+	}
+	contexts, _ := roll["contexts"].(map[string]any)
+	return contexts
+}
+
+func appendStatusContextNodes(dst, src map[string]any) {
+	if dst == nil || src == nil {
+		return
+	}
+	merged, _ := dst["nodes"].([]any)
+	for _, n := range nodes(src["nodes"]) {
+		merged = append(merged, n)
+	}
+	dst["nodes"] = merged
+	dst["pageInfo"] = src["pageInfo"]
+}
+
+func pageInfoEndCursor(connection map[string]any) string {
+	pi, _ := connection["pageInfo"].(map[string]any)
+	return str(pi["endCursor"])
 }
 
 func scmObservationFromGraphQL(ref ports.SCMPRRef, pr map[string]any) ports.SCMObservation {
@@ -322,13 +403,11 @@ func ciSummaryFromRollupState(pr map[string]any) domain.CIState {
 }
 
 func scmContextsPaginated(pr map[string]any) bool {
-	roll := statusRollup(pr)
-	contexts, _ := roll["contexts"].(map[string]any)
-	return pageInfoHasMore(contexts)
+	return pageInfoHasMore(statusContexts(pr))
 }
 
 func paginatedFailureSCMCheck(prURL string) ports.SCMCheckObservation {
-	const msg = "GitHub reports failing CI, but this PR has more than 100 check/status contexts so the failing context is outside AO's first-page GraphQL view. Open the PR checks tab for the hidden failing job."
+	const msg = "GitHub reports failing CI, but the failing context is outside AO's current GraphQL check-context page. Open the PR checks tab for the hidden failing job."
 	return ports.SCMCheckObservation{
 		Name:       "GitHub statusCheckRollup",
 		Status:     string(domain.PRCheckFailed),
@@ -446,17 +525,38 @@ func mergeabilityObservation(providerMergeable, providerMergeState, ci, review s
 	return out
 }
 
-func buildReviewThreadsQuery(ref ports.SCMPRRef, cursor string) string {
-	after := "null"
-	if cursor != "" {
-		after = graphQLString(cursor)
+func (p *Provider) fetchReviewThreadPage(ctx context.Context, ref ports.SCMPRRef, beforeCursor string) ([]ports.SCMReviewThreadObservation, string, map[string]any, error) {
+	query := buildReviewThreadsQuery(ref, beforeCursor)
+	data, err := p.client.doGraphQL(ctx, query, nil)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	repoData, _ := data["repo"].(map[string]any)
+	pr, _ := repoData["pullRequest"].(map[string]any)
+	if pr == nil {
+		return nil, "", nil, fmt.Errorf("%w: pull request not found in review response", ErrNotFound)
+	}
+	decision := string(reviewDecisionFromGraphQL(pr))
+	threads, _ := pr["reviewThreads"].(map[string]any)
+	out := make([]ports.SCMReviewThreadObservation, 0, len(nodes(threads["nodes"])))
+	for _, th := range nodes(threads["nodes"]) {
+		out = append(out, scmThreadFromGraphQL(th))
+	}
+	pi, _ := threads["pageInfo"].(map[string]any)
+	return out, decision, pi, nil
+}
+
+func buildReviewThreadsQuery(ref ports.SCMPRRef, beforeCursor string) string {
+	before := "null"
+	if beforeCursor != "" {
+		before = graphQLString(beforeCursor)
 	}
 	return fmt.Sprintf(`query{
-repo: repository(owner:%s,name:%s){ pullRequest(number:%d){ reviewDecision reviewThreads(first:100, after:%s){ nodes{
+repo: repository(owner:%s,name:%s){ pullRequest(number:%d){ reviewDecision reviewThreads(last:%d, before:%s){ nodes{
   id isResolved path line
-  comments(first:100){ nodes{ id body url author{ login __typename } } }
-} pageInfo{ hasNextPage endCursor } } } }
-}`, graphQLString(ref.Repo.Owner), graphQLString(ref.Repo.Name), ref.Number, after)
+  comments(first:%d){ nodes{ id body url author{ login __typename } } }
+} pageInfo{ hasPreviousPage startCursor } } } }
+}`, graphQLString(ref.Repo.Owner), graphQLString(ref.Repo.Name), ref.Number, githubReviewThreadPageSize, before, githubReviewCommentLimitPerThread)
 }
 
 func scmThreadFromGraphQL(th map[string]any) ports.SCMReviewThreadObservation {

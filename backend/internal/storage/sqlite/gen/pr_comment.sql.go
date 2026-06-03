@@ -19,6 +19,20 @@ func (q *Queries) DeletePRComments(ctx context.Context, prUrl string) error {
 	return err
 }
 
+const deletePRCommentsByThread = `-- name: DeletePRCommentsByThread :exec
+DELETE FROM pr_comment WHERE pr_url = ? AND thread_id = ?
+`
+
+type DeletePRCommentsByThreadParams struct {
+	PRURL    string
+	ThreadID string
+}
+
+func (q *Queries) DeletePRCommentsByThread(ctx context.Context, arg DeletePRCommentsByThreadParams) error {
+	_, err := q.db.ExecContext(ctx, deletePRCommentsByThread, arg.PRURL, arg.ThreadID)
+	return err
+}
+
 const insertPRComment = `-- name: InsertPRComment :exec
 INSERT INTO pr_comment (pr_url, comment_id, author, file, line, body, resolved, created_at, thread_id, url, is_bot)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

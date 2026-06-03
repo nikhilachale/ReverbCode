@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
@@ -239,7 +240,7 @@ func TestWriteSCMObservationPersistsMetadataChecksReviewsAndComments(t *testing.
 	threads := []domain.PullRequestReviewThread{{ThreadID: "t1", Path: "main.go", Line: 7, SemanticHash: "th", UpdatedAt: now}}
 	comments := []domain.PullRequestComment{{ThreadID: "t1", ID: "c1", Author: "reviewer", File: "main.go", Line: 7, Body: "fix", URL: "comment", CreatedAt: now}}
 
-	if err := s.WriteSCMObservation(ctx, pr, checks, threads, comments, true); err != nil {
+	if err := s.WriteSCMObservation(ctx, pr, checks, threads, comments, ports.ReviewWriteReplace); err != nil {
 		t.Fatal(err)
 	}
 	got, ok, err := s.GetPR(ctx, pr.URL)
@@ -263,6 +264,75 @@ func TestWriteSCMObservationPersistsMetadataChecksReviewsAndComments(t *testing.
 	}
 }
 
+func TestWriteSCMObservationMergeUpdatesFetchedReviewWindow(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Now().UTC().Truncate(time.Second)
+	pr := domain.PullRequest{URL: "https://github.com/o/r/pull/1", SessionID: r.ID, Number: 1, UpdatedAt: now}
+
+	initialThreads := []domain.PullRequestReviewThread{
+		{ThreadID: "older", Path: "old.go", Line: 1, Resolved: false, SemanticHash: "old", UpdatedAt: now},
+		{ThreadID: "latest", Path: "main.go", Line: 7, Resolved: false, SemanticHash: "latest-v1", UpdatedAt: now},
+	}
+	initialComments := []domain.PullRequestComment{
+		{ThreadID: "older", ID: "older-c1", Author: "ann", Body: "old", CreatedAt: now},
+		{ThreadID: "latest", ID: "latest-c1", Author: "bob", Body: "before", CreatedAt: now},
+	}
+	if err := s.WriteSCMObservation(ctx, pr, nil, initialThreads, initialComments, ports.ReviewWriteReplace); err != nil {
+		t.Fatal(err)
+	}
+
+	mergedThreads := []domain.PullRequestReviewThread{
+		{ThreadID: "latest", Path: "main.go", Line: 8, Resolved: true, SemanticHash: "latest-v2", UpdatedAt: now.Add(time.Second)},
+		{ThreadID: "new", Path: "new.go", Line: 2, Resolved: false, SemanticHash: "new", UpdatedAt: now.Add(time.Second)},
+	}
+	mergedComments := []domain.PullRequestComment{
+		{ThreadID: "latest", ID: "latest-c2", Author: "bob", Body: "after", CreatedAt: now.Add(time.Second)},
+		{ThreadID: "new", ID: "new-c1", Author: "cat", Body: "new", CreatedAt: now.Add(time.Second)},
+	}
+	if err := s.WriteSCMObservation(ctx, pr, nil, mergedThreads, mergedComments, ports.ReviewWriteMerge); err != nil {
+		t.Fatal(err)
+	}
+
+	gotThreads, err := s.ListPRReviewThreads(ctx, pr.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gotThreads) != 3 {
+		t.Fatalf("threads = %#v, want older preserved plus latest/new", gotThreads)
+	}
+	byThread := map[string]domain.PullRequestReviewThread{}
+	for _, th := range gotThreads {
+		byThread[th.ThreadID] = th
+	}
+	if byThread["older"].SemanticHash != "old" {
+		t.Fatalf("older thread not preserved: %#v", byThread["older"])
+	}
+	if byThread["latest"].SemanticHash != "latest-v2" || !byThread["latest"].Resolved || byThread["latest"].Line != 8 {
+		t.Fatalf("latest thread not updated: %#v", byThread["latest"])
+	}
+	if byThread["new"].SemanticHash != "new" {
+		t.Fatalf("new thread not inserted: %#v", byThread["new"])
+	}
+
+	gotComments, err := s.ListPRComments(ctx, pr.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{}
+	for _, c := range gotComments {
+		ids[c.ID] = true
+	}
+	if !ids["older-c1"] || !ids["latest-c2"] || !ids["new-c1"] {
+		t.Fatalf("comments after merge = %#v, want older preserved and fetched threads replaced", gotComments)
+	}
+	if ids["latest-c1"] {
+		t.Fatalf("stale fetched-thread comment was preserved: %#v", gotComments)
+	}
+}
+
 func TestWritePRPreservesSCMReviewThreads(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -272,7 +342,7 @@ func TestWritePRPreservesSCMReviewThreads(t *testing.T) {
 	pr := domain.PullRequest{URL: "https://github.com/o/r/pull/1", SessionID: r.ID, Number: 1, UpdatedAt: now}
 	threads := []domain.PullRequestReviewThread{{ThreadID: "t1", Path: "main.go", Line: 7, SemanticHash: "thread-v1", UpdatedAt: now}}
 
-	if err := s.WriteSCMObservation(ctx, pr, nil, threads, nil, true); err != nil {
+	if err := s.WriteSCMObservation(ctx, pr, nil, threads, nil, ports.ReviewWriteReplace); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.WritePR(ctx, domain.PullRequest{URL: pr.URL, SessionID: r.ID, Number: 1, CI: domain.CIPassing, UpdatedAt: now.Add(time.Second)}, nil, nil); err != nil {

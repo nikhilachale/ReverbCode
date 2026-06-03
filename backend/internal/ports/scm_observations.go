@@ -175,6 +175,10 @@ type SCMReviewObservation struct {
 	Decision string
 	// Threads contains normalized review threads fetched on the slower review cadence.
 	Threads []SCMReviewThreadObservation
+	// Partial is true when the provider intentionally fetched and persisted a
+	// bounded review-thread window instead of a complete PR-lifetime snapshot.
+	// Consumers should treat Threads as a merge/update set in that case.
+	Partial bool
 }
 
 // SCMReviewThreadObservation is a normalized review thread with comments.

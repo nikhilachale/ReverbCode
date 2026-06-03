@@ -36,11 +36,11 @@ type fakeStore struct {
 }
 
 type fakeWrite struct {
-	pr            domain.PullRequest
-	checks        []domain.PullRequestCheck
-	threads       []domain.PullRequestReviewThread
-	comments      []domain.PullRequestComment
-	replaceReview bool
+	pr         domain.PullRequest
+	checks     []domain.PullRequestCheck
+	threads    []domain.PullRequestReviewThread
+	comments   []domain.PullRequestComment
+	reviewMode ports.ReviewWriteMode
 }
 
 func (s *fakeStore) ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error) {
@@ -82,13 +82,13 @@ func (s *fakeStore) ListChecks(_ context.Context, prURL string) ([]domain.PullRe
 	return append([]domain.PullRequestCheck(nil), s.checks[prURL]...), nil
 }
 
-func (s *fakeStore) WriteSCMObservation(_ context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, replaceReview bool) error {
+func (s *fakeStore) WriteSCMObservation(_ context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.writeErr != nil {
 		return s.writeErr
 	}
-	s.writes = append(s.writes, fakeWrite{pr: pr, checks: append([]domain.PullRequestCheck(nil), checks...), threads: append([]domain.PullRequestReviewThread(nil), threads...), comments: append([]domain.PullRequestComment(nil), comments...), replaceReview: replaceReview})
+	s.writes = append(s.writes, fakeWrite{pr: pr, checks: append([]domain.PullRequestCheck(nil), checks...), threads: append([]domain.PullRequestReviewThread(nil), threads...), comments: append([]domain.PullRequestComment(nil), comments...), reviewMode: reviewMode})
 	return nil
 }
 
@@ -190,7 +190,7 @@ func (l *fakeLifecycle) ApplySCMObservation(_ context.Context, _ domain.SessionI
 	return nil
 }
 
-func newTestObserver(store *fakeStore, provider *fakeProvider, lc *fakeLifecycle, now time.Time) *Observer {
+func newTestObserver(store *fakeStore, provider *fakeProvider, lc Lifecycle, now time.Time) *Observer {
 	return New(provider, store, lc, Config{Clock: func() time.Time { return now }, Tick: time.Hour, Logger: quietSlog(), CacheMax: 128})
 }
 
@@ -405,8 +405,8 @@ func TestPoll_ReviewPollingRespectsInterval(t *testing.T) {
 	if provider.reviewCalls != 1 {
 		t.Fatalf("review not fetched after interval: %d", provider.reviewCalls)
 	}
-	if len(store.writes) == 0 || !store.writes[0].replaceReview {
-		t.Fatalf("review refresh not persisted with replaceReview: %#v", store.writes)
+	if len(store.writes) == 0 || store.writes[0].reviewMode != ports.ReviewWriteReplace {
+		t.Fatalf("review refresh not persisted with replace mode: %#v", store.writes)
 	}
 }
 
@@ -448,6 +448,37 @@ func TestPoll_ReviewHashDrivesPersistenceAndLifecycle(t *testing.T) {
 	}
 	if len(lc.observed) != 1 || !lc.observed[0].Changed.Review {
 		t.Fatalf("review change not notified: %#v", lc.observed)
+	}
+}
+
+func TestPoll_PartialReviewRefreshUsesMergeMode(t *testing.T) {
+	store := testStoreWithSession()
+	local := knownPR(1)
+	local.ReviewHash = "old"
+	local.Review = domain.ReviewChangesRequest
+	store.prs["p-1"] = []domain.PullRequest{local}
+	review := ports.SCMReviewObservation{
+		Decision: string(domain.ReviewChangesRequest),
+		Partial:  true,
+		Threads:  []ports.SCMReviewThreadObservation{{ID: "t1", Path: "f.go", Line: 2, Comments: []ports.SCMReviewCommentObservation{{ID: "c1", Author: "ann", Body: "fix this"}}}},
+	}
+	provider := &fakeProvider{
+		repoGuards: map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo", NotModified: true}},
+		reviews:    map[string]ports.SCMReviewObservation{prKey(testRepo, 1): review},
+	}
+	obs := newTestObserver(store, provider, nil, time.Unix(210, 0).UTC())
+	obs.Cache.RepoPRListETag[prKey(testRepo, 0)] = "repo"
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.writes) != 1 {
+		t.Fatalf("writes = %#v, want one partial review merge", store.writes)
+	}
+	if store.writes[0].reviewMode != ports.ReviewWriteMerge {
+		t.Fatalf("review mode = %v, want merge", store.writes[0].reviewMode)
+	}
+	if store.writes[0].pr.ReviewHash != reviewSemanticHash(review) {
+		t.Fatalf("review hash = %q, want partial hash %q", store.writes[0].pr.ReviewHash, reviewSemanticHash(review))
 	}
 }
 
