@@ -13,7 +13,6 @@ import (
 // package does not depend on the service layer.
 type SessionSource interface {
 	AllSessions(ctx context.Context) ([]domain.Session, error)
-	Session(ctx context.Context, id domain.SessionID) (domain.Session, bool, error)
 }
 
 // attentionLevel maps a derived session status and activity state to one of the

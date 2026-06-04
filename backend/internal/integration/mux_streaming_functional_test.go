@@ -37,14 +37,6 @@ func (s *testSessionSource) AllSessions(ctx context.Context) ([]domain.Session, 
 	return out, nil
 }
 
-func (s *testSessionSource) Session(ctx context.Context, id domain.SessionID) (domain.Session, bool, error) {
-	rec, ok, err := s.store.GetSession(ctx, id)
-	if err != nil || !ok {
-		return domain.Session{}, ok, err
-	}
-	return s.toSession(ctx, rec), true, nil
-}
-
 func (s *testSessionSource) toSession(ctx context.Context, rec domain.SessionRecord) domain.Session {
 	pr, ok, _ := s.store.GetDisplayPRFactsForSession(ctx, rec.ID)
 	if ok {

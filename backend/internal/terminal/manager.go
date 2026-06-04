@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -154,7 +153,7 @@ func (m *Manager) Serve(ctx context.Context, conn wsConn) {
 		conn:          conn,
 		cancel:        cancel,
 		out:           make(chan serverMsg, defaultWriteBuffer),
-		sessionEvents: make(chan sessionEvent, defaultWriteBuffer),
+		sessionEvents: make(chan struct{}, defaultWriteBuffer),
 		terms:         map[string]func(){},
 	}
 	defer c.cleanup()
@@ -174,25 +173,19 @@ func (m *Manager) Serve(ctx context.Context, conn wsConn) {
 	}
 }
 
-// sessionEvent is a unit of work for the session-state writer. snapshot=true
-// means "emit a full snapshot of all sessions"; otherwise id names the single
-// session to re-read and patch. Both are resolved live in the writer goroutine,
-// so whichever the client sees last reflects the freshest state.
-type sessionEvent struct {
-	snapshot bool
-	id       string
-}
-
 // connState is the per-connection mutable state.
 type connState struct {
 	mgr    *Manager
 	conn   wsConn
 	cancel context.CancelFunc
 	out    chan serverMsg
-	// sessionEvents is the single ordered queue feeding the session-state writer.
-	// The CDC callback pushes lightweight items (it runs on the poller loop and
-	// must not block); the writer goroutine does all DB reads off that hot path.
-	sessionEvents chan sessionEvent
+	// sessionEvents signals the session-state writer to emit a fresh full
+	// snapshot. Every signal means the same thing, so the writer coalesces
+	// bursts into one read. The CDC callback pushes here (it runs on the poller
+	// loop and must not block); the writer does the DB read off that hot path.
+	// Full snapshots (not single-session patches) are sent because the frontend
+	// replaces its session list wholesale on each "snapshot" frame.
+	sessionEvents chan struct{}
 
 	mu        sync.Mutex
 	terms     map[string]func() // terminal id -> unsubscribe
@@ -338,17 +331,16 @@ func (c *connState) handleSubscribe(msg clientMsg) {
 	}
 	c.mu.Unlock()
 
-	// Subscribe before enqueueing the snapshot so an event that fires during
-	// setup is not lost. Both the snapshot and per-session patches flow through
-	// the one ordered sessionEvents queue and are resolved live in the writer,
-	// so the last frame the client sees for any session reflects current state
-	// regardless of interleaving. The callback runs on the poller loop and must
-	// not block, so it only forwards the SessionID.
+	// Subscribe before queueing the initial snapshot so an event that fires
+	// during setup is not lost. Every signal triggers a full snapshot resolved
+	// live in the writer, so the last frame the client sees always reflects
+	// current state regardless of queue interleaving. The callback runs on the
+	// poller loop and must not block, so it only pushes a signal.
 	unsub := c.mgr.events.Subscribe(func(e cdc.Event) {
 		if c.mgr.sessionSrc == nil || e.SessionID == "" {
 			return
 		}
-		c.pushSessionEvent(sessionEvent{id: e.SessionID})
+		c.pushSessionEvent()
 	})
 	c.mu.Lock()
 	c.unsubEvts = unsub
@@ -356,18 +348,29 @@ func (c *connState) handleSubscribe(msg clientMsg) {
 
 	// Queue an initial full snapshot so the client gets current state immediately.
 	if c.mgr.sessionSrc != nil {
-		c.pushSessionEvent(sessionEvent{snapshot: true})
+		c.pushSessionEvent()
 	}
 }
 
-// pushSessionEvent queues a session-state work item for the writer. A full
-// buffer means the client cannot keep up; tear the connection down rather than
-// block the poller loop the CDC callback runs on.
-func (c *connState) pushSessionEvent(ev sessionEvent) {
+// pushSessionEvent signals the writer to emit a fresh snapshot. A full buffer
+// already holds a pending signal that will capture the latest state, so drop
+// the redundant one rather than block the poller loop the CDC callback runs on.
+func (c *connState) pushSessionEvent() {
 	select {
-	case c.sessionEvents <- ev:
+	case c.sessionEvents <- struct{}{}:
 	default:
-		c.cancel()
+	}
+}
+
+// drainSignals empties any pending signals without blocking. Used to coalesce a
+// burst of session-state signals into a single snapshot read.
+func drainSignals(ch <-chan struct{}) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
+		}
 	}
 }
 
@@ -392,29 +395,21 @@ func (c *connState) writeLoop(ctx context.Context) {
 				c.cancel()
 				return
 			}
-		case ev := <-c.sessionEvents:
-			// Resolve state here, off the broadcaster's hot path. Reading live at
-			// write time (not enqueue time) means the last frame for any session
-			// always reflects current state, whatever the queue interleaving.
+		case <-c.sessionEvents:
+			// Coalesce bursts: every queued signal means the same thing, so
+			// collapse them into one read. Resolving state here, off the
+			// broadcaster's hot path and at write time, means the snapshot always
+			// reflects current state whatever the queue interleaving.
+			drainSignals(c.sessionEvents)
 			if c.mgr.sessionSrc == nil {
 				continue
 			}
-			var patches []sessionPatch
-			if ev.snapshot {
-				all, err := c.mgr.sessionSrc.AllSessions(ctx)
-				if err != nil {
-					c.mgr.log.Warn("terminal: failed to fetch session snapshot", "err", err)
-					continue
-				}
-				patches = toSessionPatches(all)
-			} else {
-				sess, ok, err := c.mgr.sessionSrc.Session(ctx, domain.SessionID(ev.id))
-				if err != nil || !ok {
-					continue // vanished session: skip silently
-				}
-				patches = []sessionPatch{toSessionPatch(sess)}
+			all, err := c.mgr.sessionSrc.AllSessions(ctx)
+			if err != nil {
+				c.mgr.log.Warn("terminal: failed to fetch session snapshot", "err", err)
+				continue
 			}
-			if err := c.conn.WriteJSON(ctx, serverMsg{Ch: chSessions, Type: msgSnapshot, Sessions: patches}); err != nil {
+			if err := c.conn.WriteJSON(ctx, serverMsg{Ch: chSessions, Type: msgSnapshot, Sessions: toSessionPatches(all)}); err != nil {
 				c.cancel()
 				return
 			}
