@@ -367,7 +367,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 				markRepoRefreshFailed(subj.repo)
 				continue
 			}
-			if err := o.store.WriteSCMObservation(ctx, finalPR, finalChecks, finalThreads, finalComments, reviewMode); err != nil {
+			if err := o.store.WriteSCMObservation(ctx, finalPR, finalChecks, nil, nil, ports.ReviewWritePreserve); err != nil {
 				o.logger.Error("scm observer: DB lifecycle acknowledgement failed", "session", subj.session.ID, "pr", finalPR.URL, "err", err)
 				markRepoRefreshFailed(subj.repo)
 				continue

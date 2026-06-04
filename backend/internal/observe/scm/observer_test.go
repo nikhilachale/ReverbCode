@@ -530,6 +530,15 @@ func TestPoll_ReviewHashDrivesPersistenceAndLifecycle(t *testing.T) {
 	if len(store.writes) == 0 || len(store.writes[0].comments) != 1 {
 		t.Fatalf("review change not persisted: %#v", store.writes)
 	}
+	if len(store.writes) != 2 {
+		t.Fatalf("review change with lifecycle should write held-back facts then acknowledgement, got %d writes", len(store.writes))
+	}
+	if store.writes[0].reviewMode != ports.ReviewWriteReplace {
+		t.Fatalf("initial review write mode = %v, want replace", store.writes[0].reviewMode)
+	}
+	if store.writes[1].reviewMode != ports.ReviewWritePreserve || len(store.writes[1].comments) != 0 {
+		t.Fatalf("lifecycle acknowledgement should preserve review rows, got mode=%v comments=%d", store.writes[1].reviewMode, len(store.writes[1].comments))
+	}
 	if len(lc.observed) != 1 || !lc.observed[0].Changed.Review {
 		t.Fatalf("review change not notified: %#v", lc.observed)
 	}
