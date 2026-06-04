@@ -30,6 +30,7 @@ type EventsController struct {
 	Live   cdcSubscriber
 }
 
+// Register mounts the CDC SSE stream route.
 func (c *EventsController) Register(r chi.Router) {
 	r.Get("/events", c.stream)
 }
