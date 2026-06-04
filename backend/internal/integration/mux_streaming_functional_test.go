@@ -146,7 +146,7 @@ func TestMuxStreamingSessionPatchDelivery(t *testing.T) {
 	t.Cleanup(func() { _ = conn.CloseNow() })
 
 	// Subscribe and receive the initial empty snapshot.
-	sendMux(ctx, t, conn, muxMsg{"ch": "subscribe", "type": "subscribe"})
+	sendMux(ctx, t, conn, muxMsg{"ch": "subscribe", "topics": []string{"sessions", "notifications"}})
 	m := recvMux(ctx, t, conn, "sessions", "snapshot")
 	sessions := toSlice(t, m["sessions"])
 	if len(sessions) != 0 {
@@ -228,7 +228,7 @@ func TestMuxStreamingPatchReflectsPRDerivedStatus(t *testing.T) {
 		t.Fatalf("spawn: %v", err)
 	}
 
-	sendMux(ctx, t, conn, muxMsg{"ch": "subscribe", "type": "subscribe"})
+	sendMux(ctx, t, conn, muxMsg{"ch": "subscribe", "topics": []string{"sessions", "notifications"}})
 	recvMux(ctx, t, conn, "sessions", "snapshot") // drain initial snapshot
 
 	// A failing CI check on the PR makes the session derive to ci_failed.
@@ -300,7 +300,7 @@ func TestMuxStreamingInitialSnapshotContainsExistingSessions(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = conn.CloseNow() })
 
-	sendMux(ctx, t, conn, muxMsg{"ch": "subscribe", "type": "subscribe"})
+	sendMux(ctx, t, conn, muxMsg{"ch": "subscribe", "topics": []string{"sessions", "notifications"}})
 	m := recvMux(ctx, t, conn, "sessions", "snapshot")
 	sessions := toSlice(t, m["sessions"])
 	if len(sessions) != 1 {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -327,7 +328,7 @@ func (c *connState) lookup(id string) *session {
 }
 
 func (c *connState) handleSubscribe(msg clientMsg) {
-	if msg.Type != msgSubscribe || c.mgr.events == nil {
+	if c.mgr.events == nil || !slices.Contains(msg.Topics, topicSessions) {
 		return
 	}
 	c.mu.Lock()

@@ -3,6 +3,7 @@ package terminal
 import (
 	"encoding/base64"
 	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -23,8 +24,23 @@ func TestClientMsgRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if out != in {
+	if !reflect.DeepEqual(out, in) {
 		t.Fatalf("round-trip mismatch:\n got %+v\nwant %+v", out, in)
+	}
+}
+
+func TestClientMsgSubscribeFrameDecodes(t *testing.T) {
+	// The frontend sends only ch + topics, no "type"; the server gates on topics.
+	raw := []byte(`{"ch":"subscribe","topics":["sessions","notifications"]}`)
+	var out clientMsg
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Ch != chSubscribe || out.Type != "" {
+		t.Fatalf("got ch=%q type=%q, want ch=subscribe type=empty", out.Ch, out.Type)
+	}
+	if !reflect.DeepEqual(out.Topics, []string{"sessions", "notifications"}) {
+		t.Fatalf("topics = %v, want [sessions notifications]", out.Topics)
 	}
 }
 

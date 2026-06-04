@@ -18,14 +18,20 @@ const (
 	chSystem    = "system"
 )
 
+// subscribe topics the client opts into via the ch "subscribe" frame's
+// "topics" array. Only "sessions" is served today; "notifications" is accepted
+// and ignored until that channel exists server-side.
+const (
+	topicSessions = "sessions"
+)
+
 // client message types (ch "terminal" unless noted).
 const (
-	msgOpen      = "open"
-	msgData      = "data"
-	msgResize    = "resize"
-	msgClose     = "close"
-	msgSubscribe = "subscribe" // ch "subscribe"
-	msgPing      = "ping"      // ch "system"
+	msgOpen   = "open"
+	msgData   = "data"
+	msgResize = "resize"
+	msgClose  = "close"
+	msgPing   = "ping" // ch "system"
 )
 
 // server message types.
@@ -47,6 +53,10 @@ type clientMsg struct {
 	Data string `json:"data,omitempty"`
 	Cols uint16 `json:"cols,omitempty"`
 	Rows uint16 `json:"rows,omitempty"`
+	// Topics is the set of channels the client opts into on a ch "subscribe"
+	// frame (e.g. ["sessions","notifications"]). The frontend declares intent
+	// here and sends no "type", so subscription is gated on this, not Type.
+	Topics []string `json:"topics,omitempty"`
 }
 
 // serverMsg is one outbound frame.

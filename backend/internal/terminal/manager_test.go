@@ -250,10 +250,39 @@ func TestServeSessionChannelSendsInitialSnapshot(t *testing.T) {
 	defer cancel()
 	go mgr.Serve(ctx, conn)
 
-	conn.in <- clientMsg{Ch: chSubscribe, Type: msgSubscribe}
+	conn.in <- clientMsg{Ch: chSubscribe, Topics: []string{topicSessions}}
 	m := recv(t, conn, chSessions, msgSnapshot, time.Second)
 	if len(m.Sessions) != 1 || m.Sessions[0].ID != "s1" || m.Sessions[0].Status != "working" {
 		t.Fatalf("initial snapshot = %+v, want 1 session with id=s1 status=working", m.Sessions)
+	}
+}
+
+func TestServeSubscribeWithoutSessionsTopicSendsNoSnapshot(t *testing.T) {
+	bc := cdc.NewBroadcaster()
+	src := &fakeSessionSource{all: []domain.Session{{
+		SessionRecord: domain.SessionRecord{ID: "s1", ProjectID: "p1"},
+		Status:        domain.StatusWorking,
+	}}}
+	mgr := NewManager(&fakeSource{}, bc, testLogger(),
+		WithSpawn((&fakeSpawner{}).spawn), WithHeartbeat(0), WithSessionSource(src))
+	defer mgr.Close()
+
+	conn := newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, conn)
+
+	// A client opting into only "notifications" must not be subscribed to the
+	// session feed: no snapshot, and CDC events are not forwarded.
+	conn.in <- clientMsg{Ch: chSubscribe, Topics: []string{"notifications"}}
+	bc.Publish(cdc.Event{Seq: 1, ProjectID: "p1", SessionID: "s1", Type: cdc.EventSessionUpdated})
+
+	select {
+	case m := <-conn.out:
+		if m.Ch == chSessions {
+			t.Fatalf("got unexpected sessions frame for non-sessions subscriber: %+v", m)
+		}
+	case <-time.After(200 * time.Millisecond):
 	}
 }
 
@@ -277,7 +306,7 @@ func TestServeForwardsSessionChannelFromCDC(t *testing.T) {
 	defer cancel()
 	go mgr.Serve(ctx, conn)
 
-	conn.in <- clientMsg{Ch: chSubscribe, Type: msgSubscribe}
+	conn.in <- clientMsg{Ch: chSubscribe, Topics: []string{topicSessions}}
 	// Drain the initial snapshot.
 	recv(t, conn, chSessions, msgSnapshot, time.Second)
 
