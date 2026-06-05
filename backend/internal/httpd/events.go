@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -74,6 +75,7 @@ func (c *EventsController) stream(w http.ResponseWriter, r *http.Request) {
 	h.Set("Content-Type", "text/event-stream; charset=utf-8")
 	h.Set("Cache-Control", "no-cache")
 	h.Set("Connection", "keep-alive")
+	h.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
@@ -137,10 +139,14 @@ func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, e cdc.Event, sen
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", e.Seq, e.Type, data); err != nil {
+	if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", e.Seq, sseEventName(e.Type), data); err != nil {
 		return err
 	}
 	*sentSeq = e.Seq
 	flusher.Flush()
 	return nil
+}
+
+func sseEventName(t cdc.EventType) string {
+	return strings.NewReplacer("\r", "_", "\n", "_").Replace(string(t))
 }

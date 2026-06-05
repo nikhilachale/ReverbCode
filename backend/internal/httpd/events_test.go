@@ -91,6 +91,9 @@ func TestEventsStreamSubscribesBeforeReplayAndDrainsBufferedLive(t *testing.T) {
 	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
 		t.Fatalf("Content-Type = %q, want text/event-stream", ct)
 	}
+	if got := resp.Header.Get("X-Accel-Buffering"); got != "no" {
+		t.Fatalf("X-Accel-Buffering = %q, want no", got)
+	}
 
 	ids := readSSEIDs(t, resp.Body, 2)
 	if got, want := strings.Join(ids, ","), "1,2"; got != want {
@@ -116,6 +119,25 @@ func TestEventsStreamRejectsInvalidAfter(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "INVALID_AFTER") {
 		t.Fatalf("body = %s, want INVALID_AFTER", rec.Body.String())
+	}
+}
+
+func TestWriteSSEEventSanitizesEventNameNewlines(t *testing.T) {
+	rec := httptest.NewRecorder()
+	sentSeq := int64(0)
+	e := testCDCEvent(1)
+	e.Type = cdc.EventType("session_updated\nid: 999\rdata: injected")
+
+	if err := writeSSEEvent(rec, rec, e, &sentSeq); err != nil {
+		t.Fatalf("writeSSEEvent: %v", err)
+	}
+
+	body := rec.Body.String()
+	if strings.Contains(body, "\nid: 999") || strings.Contains(body, "\rdata: injected") {
+		t.Fatalf("body contains injected SSE field: %q", body)
+	}
+	if !strings.Contains(body, "event: session_updated_id: 999_data: injected\n") {
+		t.Fatalf("body = %q, want sanitized event name", body)
 	}
 }
 
