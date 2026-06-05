@@ -13,6 +13,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/auggie"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/continueagent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/copilot"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/crush"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/cursor"
@@ -45,6 +46,7 @@ func Constructors() []adapters.Adapter {
 		copilot.New(),
 		goose.New(),
 		auggie.New(),
+		continueagent.New(),
 	}
 }
 
