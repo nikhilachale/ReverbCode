@@ -17,6 +17,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/cursor"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/droid"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/goose"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/kilocode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/kiro"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/opencode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/qwen"
@@ -49,6 +50,7 @@ var Derivers = map[string]DeriveFunc{
 	"goose":       goose.DeriveActivityState,
 	"cline":       cline.DeriveActivityState,
 	"kiro":        kiro.DeriveActivityState,
+	"kilocode":    kilocode.DeriveActivityState,
 }
 
 // Derive looks up the deriver for an agent token and applies it. ok=false when
