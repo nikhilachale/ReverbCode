@@ -2,6 +2,7 @@ package project
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -120,15 +121,29 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	}
 
 	row := domain.ProjectRecord{
-		ID:           string(id),
-		Path:         path,
-		DisplayName:  name,
-		RegisteredAt: time.Now(),
+		ID:            string(id),
+		Path:          path,
+		RepoOriginURL: resolveGitOriginURL(path),
+		DisplayName:   name,
+		RegisteredAt:  time.Now(),
 	}
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project")
 	}
 	return projectFromRow(row), nil
+}
+
+// resolveGitOriginURL returns the project's `origin` remote URL via
+// `git -C path remote get-url origin`. A missing remote, missing repo, or any
+// other git error returns an empty string — `project add` must not fail just
+// because no origin is configured (the SCM observer skips such projects).
+func resolveGitOriginURL(path string) string {
+	out, err := exec.Command("git", "-C", path, "remote", "get-url", "origin").Output()
+	if err != nil {
+		slog.Default().Info("project: no git origin URL resolved", "path", path, "err", err)
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // Remove archives a project registration.
