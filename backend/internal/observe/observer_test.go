@@ -124,13 +124,26 @@ func TestCheckCredentialsOnce_ProbeAvailable(t *testing.T) {
 
 func TestCheckCredentialsOnce_ProbeUnavailableDisables(t *testing.T) {
 	var checked, disabled bool
-	probe := func(context.Context) (bool, error) { return false, nil }
+	calls := 0
+	probe := func(context.Context) (bool, error) { calls++; return false, nil }
 	ok, err := CheckCredentialsOnce(context.Background(), probe, &checked, &disabled, quietLogger(), "test")
 	if err != nil || ok {
 		t.Fatalf("ok=%v err=%v, want (false, nil)", ok, err)
 	}
 	if !checked || !disabled {
 		t.Fatalf("after unavailable: checked=%v disabled=%v", checked, disabled)
+	}
+	// Subsequent calls must keep reporting (false, nil) — the short-circuit
+	// on *checked still has to honour *disabled, otherwise a disabled
+	// observer's Poll path silently flips back to "credentials available".
+	for i := 0; i < 3; i++ {
+		ok, err := CheckCredentialsOnce(context.Background(), probe, &checked, &disabled, quietLogger(), "test")
+		if err != nil || ok {
+			t.Fatalf("repeat call %d: ok=%v err=%v, want (false, nil)", i, ok, err)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("probe should run exactly once even when disabled, ran %d times", calls)
 	}
 }
 

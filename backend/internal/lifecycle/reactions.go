@@ -217,7 +217,12 @@ func newBotCommentContent(comments []ports.TrackerCommentObservation) ([]string,
 		if !c.IsBot {
 			continue
 		}
-		if c.ID == "" && strings.TrimSpace(c.Body) == "" {
+		// Both an ID and a body are required: ID anchors the dedup
+		// signature (an empty ID collapses to "" which collides with
+		// the zero value of m.react.seen[key] and silently suppresses
+		// the nudge), and a body is what we actually need to surface
+		// to the agent.
+		if c.ID == "" || strings.TrimSpace(c.Body) == "" {
 			continue
 		}
 		bodies = append(bodies, c.Body)

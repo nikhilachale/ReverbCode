@@ -413,6 +413,40 @@ func TestApplyTrackerFacts_NudgeSuppressedOnRepeat(t *testing.T) {
 	}
 }
 
+func TestApplyTrackerFacts_BotCommentWithEmptyIDIsIgnored(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	// Bot comment lacks an ID — without one we cannot dedup, and the
+	// zero-value signature collides with m.react.seen's empty default and
+	// would silently suppress every future nudge for this issue. The
+	// reducer must skip it entirely.
+	o := ports.TrackerObservation{
+		Fetched: true,
+		Issue:   ports.TrackerIssueObservation{URL: "https://github.com/o/r/issues/1", State: domain.IssueOpen},
+		Comments: []ports.TrackerCommentObservation{
+			{ID: "", Author: "ci-bot[bot]", Body: "no id, must be skipped", IsBot: true},
+		},
+		Changed: ports.TrackerChanged{Comments: true},
+	}
+	if err := m.ApplyTrackerFacts(ctx, "mer-1", o); err != nil {
+		t.Fatalf("ApplyTrackerFacts: %v", err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("bot comment with empty ID must not nudge, got %v", msg.msgs)
+	}
+	// A subsequent, properly-formed bot comment must still nudge — the
+	// earlier empty-ID entry must not have polluted the dedup signature.
+	o.Comments = []ports.TrackerCommentObservation{
+		{ID: "bot-1", Author: "ci-bot[bot]", Body: "now with an id", IsBot: true},
+	}
+	if err := m.ApplyTrackerFacts(ctx, "mer-1", o); err != nil {
+		t.Fatalf("second ApplyTrackerFacts: %v", err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("follow-up bot comment with real ID should nudge, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+}
+
 func TestApplyTrackerFacts_NotFetchedIsNoop(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")

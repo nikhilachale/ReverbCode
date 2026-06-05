@@ -64,10 +64,13 @@ type CredentialProbe func(ctx context.Context) (available bool, err error)
 //   - probe returns false    → *checked = true, *disabled = true, returns (false, nil). Observer stays disabled.
 //   - probe returns true     → *checked = true, returns (true, nil). Subsequent calls bypass the probe.
 //
+// Subsequent calls after the probe has run return (!*disabled, nil) so the
+// disabled verdict is honoured on every poll, not just the first one.
+//
 // A context-cancellation before the probe returns (false, ctx.Err()).
 func CheckCredentialsOnce(ctx context.Context, probe CredentialProbe, checked, disabled *bool, logger *slog.Logger, name string) (bool, error) {
 	if *checked {
-		return true, nil
+		return !*disabled, nil
 	}
 	if err := ctx.Err(); err != nil {
 		return false, err
