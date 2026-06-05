@@ -145,6 +145,23 @@ export interface paths {
         patch: operations["renameSession"];
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Report an agent activity-state signal for a session */
+        post: operations["setSessionActivity"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/kill": {
         parameters: {
             query?: never;
@@ -415,6 +432,18 @@ export interface components {
         SessionResponse: {
             session: components["schemas"]["Session"];
         };
+        SetActivityRequest: {
+            /**
+             * @description Agent activity state reported by an agent hook.
+             * @enum {string}
+             */
+            state: "active" | "idle" | "waiting_input" | "exited";
+        };
+        SetActivityResponse: {
+            ok: boolean;
+            sessionId: string;
+            state: string;
+        };
         SpawnOrchestratorRequest: {
             clean?: boolean;
             projectId: string;
@@ -426,7 +455,7 @@ export interface components {
             agentRules?: string;
             branch?: string;
             /** @enum {string} */
-            harness?: "claude-code" | "codex" | "aider" | "opencode";
+            harness?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand";
             issueId?: string;
             /** @enum {string} */
             kind?: "worker" | "orchestrator";
@@ -1037,6 +1066,69 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RenameSessionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    setSessionActivity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetActivityRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetActivityResponse"];
                 };
             };
             /** @description Bad Request */

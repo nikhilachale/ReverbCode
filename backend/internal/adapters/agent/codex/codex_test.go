@@ -28,6 +28,7 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 	want := []string{
 		"codex",
 		"-c", "check_for_update_on_startup=false",
+		"--dangerously-bypass-hook-trust",
 		"--dangerously-bypass-approvals-and-sandbox",
 		"-c", "model_instructions_file=" + filepath.Join("tmp", "prompt with spaces.md"),
 		"--", "-fix this",
@@ -249,6 +250,7 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 		"codex",
 		"resume",
 		"-c", "check_for_update_on_startup=false",
+		"--dangerously-bypass-hook-trust",
 		"--ask-for-approval", "on-request",
 		"-c", `approvals_reviewer="auto_review"`,
 		"thread-123",
@@ -296,8 +298,8 @@ func TestSessionInfoReadsHookMetadata(t *testing.T) {
 		WorkspacePath: "/some/path",
 		Metadata: map[string]string{
 			ports.MetadataKeyAgentSessionID: "thread-123",
-			codexTitleMetadataKey:           "Fix login redirect",
-			codexSummaryMetadataKey:         "Updated the auth callback and tests.",
+			ports.MetadataKeyTitle:          "Fix login redirect",
+			ports.MetadataKeySummary:        "Updated the auth callback and tests.",
 			"ignored":                       "not returned",
 		},
 	})

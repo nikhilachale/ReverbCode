@@ -19,11 +19,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-const (
-	codexTitleMetadataKey   = "title"
-	codexSummaryMetadataKey = "summary"
-)
-
 // Plugin is the Codex agent adapter. It is safe for concurrent use; the binary
 // path is resolved once and cached under binaryMu.
 type Plugin struct {
@@ -61,8 +56,9 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 }
 
 // GetLaunchCommand builds the argv to start a new Codex session, applying the
-// no-update-check and approval flags, optional system-prompt instructions, and
-// the initial prompt (passed after `--` so a leading "-" is not read as a flag).
+// no-update-check, hook-trust bypass, and approval flags, optional
+// system-prompt instructions, and the initial prompt (passed after `--` so a
+// leading "-" is not read as a flag).
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.codexBinary(ctx)
 	if err != nil {
@@ -71,6 +67,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary}
 	appendNoUpdateCheckFlag(&cmd)
+	appendHookTrustBypassFlag(&cmd)
 	appendApprovalFlags(&cmd, cfg.Permissions)
 
 	if cfg.SystemPromptFile != "" {
@@ -116,6 +113,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = make([]string, 0, 8)
 	cmd = append(cmd, binary, "resume")
 	appendNoUpdateCheckFlag(&cmd)
+	appendHookTrustBypassFlag(&cmd)
 	appendApprovalFlags(&cmd, cfg.Permissions)
 	cmd = append(cmd, agentSessionID)
 	return cmd, true, nil
@@ -129,8 +127,8 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	}
 	info := ports.SessionInfo{
 		AgentSessionID: session.Metadata[ports.MetadataKeyAgentSessionID],
-		Title:          session.Metadata[codexTitleMetadataKey],
-		Summary:        session.Metadata[codexSummaryMetadataKey],
+		Title:          session.Metadata[ports.MetadataKeyTitle],
+		Summary:        session.Metadata[ports.MetadataKeySummary],
 	}
 	if info.AgentSessionID == "" && info.Title == "" && info.Summary == "" {
 		return ports.SessionInfo{}, false, nil
@@ -225,6 +223,14 @@ func (p *Plugin) codexBinary(ctx context.Context) (string, error) {
 
 func appendNoUpdateCheckFlag(cmd *[]string) {
 	*cmd = append(*cmd, "-c", "check_for_update_on_startup=false")
+}
+
+func appendHookTrustBypassFlag(cmd *[]string) {
+	// AO installs deterministic workspace-local Codex hooks immediately before
+	// launch/restore. Without this flag, a fresh per-session worktree can skip
+	// those hooks until an interactive /hooks trust review happens, leaving AO
+	// without activity signals.
+	*cmd = append(*cmd, "--dangerously-bypass-hook-trust")
 }
 
 func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
