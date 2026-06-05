@@ -843,10 +843,10 @@ func TestPoll_DuplicateTrackedPRKeepsFirstSession(t *testing.T) {
 	}
 }
 
-// TestDiscoverSubjects_BackfillsRepoOriginURL guards the lazy backfill from
-// issue #108: a project registered before project.Add resolved origin URLs
-// (RepoOriginURL == "") gets its origin filled in from the on-disk repo on the
-// first observer poll, then re-persisted so subsequent polls skip the shell-out.
+// TestDiscoverSubjects_BackfillsRepoOriginURL asserts that a project row with
+// an empty RepoOriginURL but a real on-disk repo gets its origin filled in
+// during discovery and persisted, so the same project becomes observable
+// without re-running project add.
 func TestDiscoverSubjects_BackfillsRepoOriginURL(t *testing.T) {
 	dir := t.TempDir()
 	if out, err := exec.Command("git", "init", dir).CombinedOutput(); err != nil {
@@ -873,9 +873,9 @@ func TestDiscoverSubjects_BackfillsRepoOriginURL(t *testing.T) {
 	}
 }
 
-// TestDiscoverSubjects_NonGitPathDoesNotBackfill confirms the backfill is a
-// best-effort shell-out: a non-git path leaves RepoOriginURL empty (no
-// persisted change, no error propagation) so the project is simply skipped.
+// TestDiscoverSubjects_NonGitPathDoesNotBackfill confirms the backfill is
+// best-effort: a non-git project path leaves RepoOriginURL empty without
+// erroring or persisting a stub, so the project is simply skipped.
 func TestDiscoverSubjects_NonGitPathDoesNotBackfill(t *testing.T) {
 	dir := t.TempDir()
 	store := &fakeStore{

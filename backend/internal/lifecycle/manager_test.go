@@ -236,12 +236,10 @@ func TestPRObservation_MergedTerminatesWithoutNudge(t *testing.T) {
 	}
 }
 
-// TestPRObservation_DedupSurvivesManagerRestart guards issue #108: the
-// reaction-dedup `seen` map used to live only on Manager and was lost on
-// daemon restart, so a still-failing CI nudged the agent again on the first
-// post-restart poll. The fix persists the signatures keyed by PR URL; this
-// test simulates a restart by constructing a fresh Manager over the same
-// fakeStore and asserts the second send is suppressed.
+// TestPRObservation_DedupSurvivesManagerRestart simulates a daemon restart by
+// constructing a second Manager over the same store and asserts that an
+// identical PR observation does not re-fire the nudge — the dedup signature
+// must survive process restart, not just live in the Manager's maps.
 func TestPRObservation_DedupSurvivesManagerRestart(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = working("mer-1")

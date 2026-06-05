@@ -207,6 +207,12 @@ func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key,
 	if err := m.messenger.Send(ctx, id, msg); err != nil {
 		return err
 	}
+	// Order: Send → in-memory mutation → durable persist. Sending first means a
+	// transient persist failure does NOT swallow a real send (the agent saw the
+	// message; subsequent polls in this process suppress re-sends via the
+	// in-memory dedup). A persist failure that survives until a daemon restart
+	// degrades to one extra nudge — preferred over the inverse (persist before
+	// send, then crash mid-call) which would silently lose a real nudge.
 	m.react.seen[key] = sig
 	m.react.attempts[key] = attempts + 1
 	if prURL != "" {
@@ -227,14 +233,10 @@ func (m *Manager) loadPRSignaturesLocked(ctx context.Context, prURL string) erro
 	if raw == "" {
 		return nil
 	}
-	// Treat corrupt payloads as empty — re-firing a nudge once is preferable
-	// to crashing the lifecycle write path on bad persisted state. Comparing
-	// against nil directly (no `err :=`) keeps the nilerr lint quiet about the
-	// intentional swallow.
+	// A corrupt persisted payload must not crash the lifecycle write path;
+	// the worst case from a swallow is re-firing a nudge once.
 	var p reactionPayload
-	if json.Unmarshal([]byte(raw), &p) != nil {
-		return nil
-	}
+	_ = json.Unmarshal([]byte(raw), &p)
 	for k, v := range p.Seen {
 		if _, ok := m.react.seen[k]; !ok {
 			m.react.seen[k] = v

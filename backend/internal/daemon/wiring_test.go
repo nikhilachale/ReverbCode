@@ -268,11 +268,10 @@ func (c *captureMessenger) Send(_ context.Context, id domain.SessionID, msg stri
 	return nil
 }
 
-// TestWiring_StartLifecycleThreadsMessengerIntoLCM guards the regression from
-// issue #108: startLifecycle used to construct the LCM with a nil messenger,
-// which silently dropped every SCM-driven nudge inside sendOnce. The test wires
-// the real lifecycle through a real store and a captureMessenger, then drives
-// an SCM observation that should produce a CI-failure nudge.
+// TestWiring_StartLifecycleThreadsMessengerIntoLCM asserts startLifecycle
+// constructs the LCM with a real messenger by driving an SCM observation
+// through the wired stack and checking the messenger receives the CI-failure
+// nudge — a nil messenger here would silently drop the send inside sendOnce.
 func TestWiring_StartLifecycleThreadsMessengerIntoLCM(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	// Cancel must run BEFORE Stop so the reaper goroutine's ctx.Done() fires;

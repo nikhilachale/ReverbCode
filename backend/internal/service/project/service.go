@@ -2,7 +2,6 @@ package project
 
 import (
 	"context"
-	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -140,7 +139,6 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 func resolveGitOriginURL(path string) string {
 	out, err := exec.Command("git", "-C", path, "remote", "get-url", "origin").Output()
 	if err != nil {
-		slog.Default().Info("project: no git origin URL resolved", "path", path, "err", err)
 		return ""
 	}
 	return strings.TrimSpace(string(out))
