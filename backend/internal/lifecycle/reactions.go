@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 
@@ -81,7 +82,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	suppressAgentNudge := rec.Activity.State == domain.ActivityWaitingInput
 	if o.CI == domain.CIFailing {
 		for _, ch := range o.Checks {
-			if ch.Status != domain.PRCheckFailed {
+			if !ciCheckNeedsAttention(ch.Status) {
 				continue
 			}
 			commit := firstNonEmptyString(ch.CommitHash, o.HeadSHA, "unknown")
@@ -123,7 +124,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 			sig = o.ReviewHash
 		}
 		if sig == "" && len(o.ThreadIDs) > 0 {
-			sig = strings.Join(o.ThreadIDs, ",")
+			sig = strings.Join(sortedStrings(o.ThreadIDs), ",")
 		}
 		if sig == "" {
 			sig = string(o.Review)
@@ -289,7 +290,7 @@ func scmToPRObservation(o ports.SCMObservation) ports.PRObservation {
 			})
 		}
 	}
-	pr.ReviewHash = strings.Join(reviewSigParts, ",")
+	pr.ReviewHash = strings.Join(sortedStrings(reviewSigParts), ",")
 	return pr
 }
 
@@ -395,7 +396,11 @@ func reviewContent(comments []ports.PRCommentObservation) (string, string) {
 		bodies = append(bodies, c.Body)
 		ids = append(ids, c.ID)
 	}
-	return strings.Join(bodies, "\n\n"), strings.Join(ids, ",")
+	return strings.Join(bodies, "\n\n"), strings.Join(sortedStrings(ids), ",")
+}
+
+func ciCheckNeedsAttention(status domain.PRCheckStatus) bool {
+	return status == domain.PRCheckFailed || status == domain.PRCheckCancelled
 }
 
 func reviewIDs(comments []ports.PRCommentObservation) []string {
@@ -451,6 +456,12 @@ func boundedString(s string, limit int) string {
 		return s
 	}
 	return s[:limit]
+}
+
+func sortedStrings(in []string) []string {
+	out := append([]string(nil), in...)
+	sort.Strings(out)
+	return out
 }
 
 func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key, sig, msg string, maxAttempts int) error {

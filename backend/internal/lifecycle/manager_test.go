@@ -534,6 +534,48 @@ func TestPRObservation_CIFailingEmitsNotificationIntent(t *testing.T) {
 	}
 }
 
+func TestPRObservation_CICancelledEmitsNotificationIntent(t *testing.T) {
+	m, st, msg, notifications := newManagerWithNotifications()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.PRObservation{Fetched: true, URL: "pr1", CI: domain.CIFailing, Checks: []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckCancelled, URL: "ci"}}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(notifications.intents) != 1 {
+		t.Fatalf("intents = %d", len(notifications.intents))
+	}
+	got := notifications.intents[0]
+	if got.Type != domain.NotificationCIFailing || got.Context.Facts["status"] != domain.PRCheckCancelled {
+		t.Fatalf("intent = %+v", got)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("cancelled failing CI should still nudge once, got %v", msg.msgs)
+	}
+}
+
+func TestSCMObservationReviewHashSortsIDs(t *testing.T) {
+	mk := func(threads []ports.SCMReviewThreadObservation) ports.SCMObservation {
+		return ports.SCMObservation{
+			Fetched: true,
+			Review: ports.SCMReviewObservation{
+				Decision: string(domain.ReviewChangesRequest),
+				Threads:  threads,
+			},
+		}
+	}
+	first := scmToPRObservation(mk([]ports.SCMReviewThreadObservation{
+		{ID: "t2", Comments: []ports.SCMReviewCommentObservation{{ID: "c2"}}},
+		{ID: "t1", Comments: []ports.SCMReviewCommentObservation{{ID: "c1"}}},
+	}))
+	second := scmToPRObservation(mk([]ports.SCMReviewThreadObservation{
+		{ID: "t1", Comments: []ports.SCMReviewCommentObservation{{ID: "c1"}}},
+		{ID: "t2", Comments: []ports.SCMReviewCommentObservation{{ID: "c2"}}},
+	}))
+	if first.ReviewHash == "" || first.ReviewHash != second.ReviewHash {
+		t.Fatalf("review hash should be stable across provider ordering: first=%q second=%q", first.ReviewHash, second.ReviewHash)
+	}
+}
+
 func TestPRObservation_ReviewMergeConflictReadyAndMergedIntents(t *testing.T) {
 	for _, tc := range []struct {
 		name string
