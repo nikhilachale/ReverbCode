@@ -378,10 +378,10 @@ func TestHookMethodsRequireWorkspacePath(t *testing.T) {
 // hooks, so this is a tripwire for that class of regression.
 func TestCopilotManagedHooksUseDocumentedEventNames(t *testing.T) {
 	wantEventByCommand := map[string]string{
-		"session-start":       "sessionStart",
-		"user-prompt-submit":  "userPromptSubmitted",
-		"permission-request":  "preToolUse",
-		"stop":                "agentStop",
+		"session-start":      "sessionStart",
+		"user-prompt-submit": "userPromptSubmitted",
+		"permission-request": "preToolUse",
+		"stop":               "agentStop",
 	}
 	if len(copilotManagedHooks) != len(wantEventByCommand) {
 		t.Fatalf("copilotManagedHooks length = %d, want %d", len(copilotManagedHooks), len(wantEventByCommand))
