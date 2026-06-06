@@ -67,6 +67,8 @@ func (DefaultMaker) Make(_ context.Context, input MakeInput) (domain.Notificatio
 	default:
 		return domain.NotificationContent{}, fmt.Errorf("unsupported notification type %q", input.Intent.Type)
 	}
+	// Body intentionally mirrors Summary for V1. Richer channel-specific or
+	// long-form content can be produced later by a custom Maker implementation.
 	return domain.NotificationContent{Title: truncateRunes(title, 40), Summary: truncateRunes(summary, 120), Body: truncateRunes(summary, 500)}, nil
 }
 

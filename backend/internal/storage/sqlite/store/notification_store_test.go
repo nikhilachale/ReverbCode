@@ -115,3 +115,42 @@ func TestNotificationStoreResolve(t *testing.T) {
 		t.Fatalf("resolved notification = %+v", got)
 	}
 }
+
+func TestNotificationStoreResolveEscapesDedupeKeyPrefixWildcards(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	rec := seedNotificationSession(ctx, t, s)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	literalPercent := sampleNotification("n1", rec.ProjectID, rec.ID, "ci:%:build:c1", "fp1", now)
+	if _, _, err := s.UpsertNotification(ctx, literalPercent); err != nil {
+		t.Fatal(err)
+	}
+	plainCI := sampleNotification("n2", rec.ProjectID, rec.ID, "ci:abc:build:c1", "fp2", now)
+	if _, _, err := s.UpsertNotification(ctx, plainCI); err != nil {
+		t.Fatal(err)
+	}
+
+	resolvedAt := now.Add(time.Hour)
+	count, err := s.ResolveNotifications(ctx, domain.NotificationResolveFilter{
+		ProjectID:         rec.ProjectID,
+		DedupeKeyPrefixes: []string{"ci:%:"},
+	}, resolvedAt)
+	if err != nil || count != 1 {
+		t.Fatalf("resolve count=%d err=%v", count, err)
+	}
+	gotLiteral, _, err := s.GetNotification(ctx, "n1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotPlain, _, err := s.GetNotification(ctx, "n2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotLiteral.Status != domain.NotificationResolved {
+		t.Fatalf("literal-percent notification should resolve, got %+v", gotLiteral)
+	}
+	if gotPlain.Status != domain.NotificationUnread {
+		t.Fatalf("plain CI notification should remain unread; prefix wildcard was not escaped: %+v", gotPlain)
+	}
+}

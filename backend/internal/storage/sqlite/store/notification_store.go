@@ -128,8 +128,8 @@ func (s *Store) ResolveNotifications(ctx context.Context, filter domain.Notifica
 	if len(filter.DedupeKeyPrefixes) > 0 {
 		ors := make([]string, 0, len(filter.DedupeKeyPrefixes))
 		for _, prefix := range filter.DedupeKeyPrefixes {
-			ors = append(ors, "dedupe_key LIKE ?")
-			args = append(args, prefix+"%")
+			ors = append(ors, "dedupe_key LIKE ? ESCAPE '\\'")
+			args = append(args, escapeLikePrefix(prefix)+"%")
 		}
 		clauses = append(clauses, "("+strings.Join(ors, " OR ")+")")
 	}
@@ -300,4 +300,8 @@ func placeholders(n int) string {
 		parts[i] = "?"
 	}
 	return strings.Join(parts, ",")
+}
+
+func escapeLikePrefix(prefix string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(prefix)
 }
