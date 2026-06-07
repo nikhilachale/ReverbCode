@@ -15,7 +15,9 @@ import (
 
 const (
 	defaultGitBinary = "git"
-	defaultBranch    = "main"
+	// defaultBranch is the base branch used when neither the per-project config
+	// nor the adapter options name one. It shares domain's single source of truth.
+	defaultBranch = domain.DefaultBranchName
 )
 
 // ErrUnsafePath is returned when a resolved worktree path escapes the managed

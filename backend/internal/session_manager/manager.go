@@ -157,7 +157,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		ProjectID:  cfg.ProjectID,
 		SessionID:  id,
 		Branch:     branch,
-		BaseBranch: project.Config.DefaultBranch,
+		BaseBranch: project.Config.WithDefaults().DefaultBranch,
 	})
 	if err != nil {
 		m.markSpawnFailedTerminated(ctx, id)

@@ -87,6 +87,27 @@ const (
 	OpencodeSessionIgnore = "ignore"
 )
 
+// DefaultBranchName is the base branch used when a project does not configure
+// one. It is the single source of truth for the "main" default shared by the
+// read-model and the workspace adapter.
+const DefaultBranchName = "main"
+
+// DefaultProjectConfig returns the config a project has when it sets nothing.
+// Only DefaultBranch carries a non-empty default; every other field's default
+// is its zero value (no env, no symlinks, agent defaults, …).
+func DefaultProjectConfig() ProjectConfig {
+	return ProjectConfig{DefaultBranch: DefaultBranchName}
+}
+
+// WithDefaults overlays the defaults onto c, filling only fields the project
+// left unset. A set field is always preserved.
+func (c ProjectConfig) WithDefaults() ProjectConfig {
+	if c.DefaultBranch == "" {
+		c.DefaultBranch = DefaultBranchName
+	}
+	return c
+}
+
 // IsZero reports whether the config carries no settings, so storage can persist
 // SQL NULL and resolution can skip an empty config.
 func (c ProjectConfig) IsZero() bool {

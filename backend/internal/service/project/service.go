@@ -205,16 +205,12 @@ func (m *Service) suggestID(ctx context.Context, base domain.ProjectID) domain.P
 }
 
 func projectFromRow(row domain.ProjectRecord) Project {
-	defaultBranch := "main"
-	if row.Config.DefaultBranch != "" {
-		defaultBranch = row.Config.DefaultBranch
-	}
 	p := Project{
 		ID:            domain.ProjectID(row.ID),
 		Name:          displayName(row),
 		Path:          row.Path,
 		Repo:          row.RepoOriginURL,
-		DefaultBranch: defaultBranch,
+		DefaultBranch: row.Config.WithDefaults().DefaultBranch,
 	}
 	if !row.Config.IsZero() {
 		cfg := row.Config

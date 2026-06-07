@@ -26,6 +26,41 @@ func TestProjectConfigValidate(t *testing.T) {
 	}
 }
 
+func TestDefaultProjectConfig(t *testing.T) {
+	def := DefaultProjectConfig()
+
+	// DefaultBranch is the one field with a non-empty default.
+	if def.DefaultBranch != DefaultBranchName {
+		t.Fatalf("default DefaultBranch = %q, want %q", def.DefaultBranch, DefaultBranchName)
+	}
+	if DefaultBranchName != "main" {
+		t.Fatalf("DefaultBranchName = %q, want main", DefaultBranchName)
+	}
+
+	// Every other field defaults to its zero value: clearing DefaultBranch must
+	// leave the config completely empty.
+	def.DefaultBranch = ""
+	if !def.IsZero() {
+		t.Fatalf("default config has unexpected non-zero fields: %#v", def)
+	}
+}
+
+func TestProjectConfigWithDefaults(t *testing.T) {
+	// An unset config gets the default branch.
+	if got := (ProjectConfig{}).WithDefaults(); got.DefaultBranch != DefaultBranchName {
+		t.Fatalf("WithDefaults branch = %q, want %q", got.DefaultBranch, DefaultBranchName)
+	}
+
+	// A set field is preserved, not overwritten.
+	got := (ProjectConfig{DefaultBranch: "develop", AgentConfig: AgentConfig{Model: "m"}}).WithDefaults()
+	if got.DefaultBranch != "develop" {
+		t.Fatalf("WithDefaults overwrote a set branch: %q", got.DefaultBranch)
+	}
+	if got.AgentConfig.Model != "m" {
+		t.Fatalf("WithDefaults dropped a set field: %#v", got.AgentConfig)
+	}
+}
+
 func TestProjectConfigIsZero(t *testing.T) {
 	if !(ProjectConfig{}).IsZero() {
 		t.Fatal("empty config should be zero")
