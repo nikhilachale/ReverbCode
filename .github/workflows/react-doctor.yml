@@ -13,31 +13,20 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
+  statuses: write
 
 jobs:
   doctor:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend/src/landing
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      # Composite action: installs react-doctor itself, runs the scan against
+      # the landing site, posts a sticky PR summary + inline review comments,
+      # and publishes a commit status. Default blocking=error means only
+      # error-severity findings fail the job; warnings are reported but don't
+      # block.
+      - uses: millionco/react-doctor@v2
         with:
-          # Matches flake.nix (nodejs_22) and react-doctor's engines
-          # requirement (^20.19.0 || >=22.12.0). setup-node resolves "22"
-          # to the latest 22.x, which satisfies both.
-          node-version: "22"
-          cache: "npm"
-          cache-dependency-path: frontend/src/landing/package-lock.json
-
-      - name: Install
-        run: npm ci
-
-      # Default --blocking=error: surfaces all categories (security, bugs,
-      # performance, accessibility, maintainability) but only fails CI on
-      # errors, not warnings. Tighten via `--blocking warning` once the
-      # warning backlog is triaged.
-      - name: React Doctor
-        run: npm run doctor
+          directory: frontend/src/landing
