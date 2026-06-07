@@ -87,23 +87,32 @@ const (
 	OpencodeSessionIgnore = "ignore"
 )
 
-// DefaultBranchName is the base branch used when a project does not configure
-// one. It is the single source of truth for the "main" default shared by the
-// read-model and the workspace adapter.
-const DefaultBranchName = "main"
+// Documented per-project defaults (mirrors the legacy agent-orchestrator.yaml).
+const (
+	DefaultBranchName  = "main"   // base branch when none is configured
+	DefaultTrackerName = "github" // issue tracker defaults to GitHub issues
+)
 
-// DefaultProjectConfig returns the config a project has when it sets nothing.
-// Only DefaultBranch carries a non-empty default; every other field's default
-// is its zero value (no env, no symlinks, agent defaults, …).
+// DefaultProjectConfig returns the config a project has when it sets nothing:
+// branch "main" and the GitHub issue tracker. Every other field defaults to its
+// zero value (no env/symlinks/post-create/rules, agent + role defaults, no SCM
+// webhook, no OpenCode strategy override).
 func DefaultProjectConfig() ProjectConfig {
-	return ProjectConfig{DefaultBranch: DefaultBranchName}
+	return ProjectConfig{
+		DefaultBranch: DefaultBranchName,
+		Tracker:       TrackerConfig{Plugin: DefaultTrackerName},
+	}
 }
 
-// WithDefaults overlays the defaults onto c, filling only fields the project
-// left unset. A set field is always preserved.
+// WithDefaults overlays DefaultProjectConfig onto c, filling only fields the
+// project left unset. A set field is always preserved.
 func (c ProjectConfig) WithDefaults() ProjectConfig {
+	def := DefaultProjectConfig()
 	if c.DefaultBranch == "" {
-		c.DefaultBranch = DefaultBranchName
+		c.DefaultBranch = def.DefaultBranch
+	}
+	if c.Tracker.Plugin == "" {
+		c.Tracker.Plugin = def.Tracker.Plugin
 	}
 	return c
 }
