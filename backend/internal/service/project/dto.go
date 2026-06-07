@@ -11,9 +11,17 @@ type GetResult struct {
 
 // AddInput is the body shape for POST /api/v1/projects.
 type AddInput struct {
-	Path      string  `json:"path"`
-	ProjectID *string `json:"projectId,omitempty"`
-	Name      *string `json:"name,omitempty"`
+	Path        string         `json:"path"`
+	ProjectID   *string        `json:"projectId,omitempty"`
+	Name        *string        `json:"name,omitempty"`
+	AgentConfig map[string]any `json:"agentConfig,omitempty"`
+}
+
+// SetAgentConfigInput is the body shape for PUT
+// /api/v1/projects/{id}/agent-config. Config replaces the project's stored
+// agent config wholesale; an empty/nil map clears it.
+type SetAgentConfigInput struct {
+	Config map[string]any `json:"config"`
 }
 
 // RemoveResult reports what DELETE /api/v1/projects/{id} actually did.

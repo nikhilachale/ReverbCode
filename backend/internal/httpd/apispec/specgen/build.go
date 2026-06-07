@@ -298,6 +298,18 @@ func projectOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPut, path: "/api/v1/projects/{id}/agent-config", id: "setProjectAgentConfig", tag: "projects",
+			summary:    "Replace a project's per-project agent config",
+			pathParams: []any{controllers.ProjectIDParam{}},
+			reqBody:    projectsvc.SetAgentConfigInput{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ProjectResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodDelete, path: "/api/v1/projects/{id}", id: "removeProject", tag: "projects",
 			summary:    "Remove a project; stops sessions, cleans workspaces, unregisters",
 			pathParams: []any{controllers.ProjectIDParam{}},

@@ -18,6 +18,7 @@ type Project struct {
 	Repo          string           `json:"repo"`
 	DefaultBranch string           `json:"defaultBranch"`
 	Agent         string           `json:"agent,omitempty"`
+	AgentConfig   map[string]any   `json:"agentConfig,omitempty"`
 	Tracker       *TrackerConfig   `json:"tracker,omitempty"`
 	SCM           *SCMConfig       `json:"scm,omitempty"`
 }

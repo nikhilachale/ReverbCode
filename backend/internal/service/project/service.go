@@ -26,6 +26,10 @@ type Manager interface {
 	// Add registers a new project from a git repository path.
 	Add(ctx context.Context, in AddInput) (Project, error)
 
+	// SetAgentConfig replaces a project's per-project agent config, returning
+	// the updated read-model.
+	SetAgentConfig(ctx context.Context, id domain.ProjectID, in SetAgentConfigInput) (Project, error)
+
 	// Remove unregisters a project, stopping its sessions and reclaiming
 	// managed workspaces.
 	Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error)
@@ -125,9 +129,31 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		RepoOriginURL: resolveGitOriginURL(path),
 		DisplayName:   name,
 		RegisteredAt:  time.Now(),
+		AgentConfig:   in.AgentConfig,
 	}
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project")
+	}
+	return projectFromRow(row), nil
+}
+
+// SetAgentConfig replaces the project's stored agent config. The config is
+// persisted as-is; the owning agent adapter validates the keys at spawn when the
+// session's harness — and therefore the adapter that owns the keys — is known.
+func (m *Service) SetAgentConfig(ctx context.Context, id domain.ProjectID, in SetAgentConfigInput) (Project, error) {
+	if err := validateProjectID(id); err != nil {
+		return Project{}, err
+	}
+	row, ok, err := m.store.GetProject(ctx, string(id))
+	if err != nil {
+		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
+	}
+	if !ok || !row.ArchivedAt.IsZero() {
+		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	row.AgentConfig = in.Config
+	if err := m.store.UpsertProject(ctx, row); err != nil {
+		return Project{}, apierr.Internal("PROJECT_CONFIG_UPDATE_FAILED", "Failed to update project agent config")
 	}
 	return projectFromRow(row), nil
 }
@@ -175,6 +201,7 @@ func projectFromRow(row domain.ProjectRecord) Project {
 		Path:          row.Path,
 		Repo:          row.RepoOriginURL,
 		DefaultBranch: "main",
+		AgentConfig:   row.AgentConfig,
 	}
 }
 

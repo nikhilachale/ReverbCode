@@ -27,6 +27,7 @@ func (c *ProjectsController) Register(r chi.Router) {
 	r.Get("/projects", c.list)
 	r.Post("/projects", c.add)
 	r.Get("/projects/{id}", c.get)
+	r.Put("/projects/{id}/agent-config", c.setAgentConfig)
 	r.Delete("/projects/{id}", c.remove)
 }
 
@@ -80,6 +81,24 @@ func (c *ProjectsController) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, resp)
+}
+
+func (c *ProjectsController) setAgentConfig(w http.ResponseWriter, r *http.Request) {
+	if c.Mgr == nil {
+		apispec.NotImplemented(w, r, "PUT", "/api/v1/projects/{id}/agent-config")
+		return
+	}
+	var in projectsvc.SetAgentConfigInput
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	p, err := c.Mgr.SetAgentConfig(r.Context(), projectID(r), in)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, ProjectResponse{Project: p})
 }
 
 func (c *ProjectsController) remove(w http.ResponseWriter, r *http.Request) {

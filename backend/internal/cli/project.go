@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -53,9 +54,23 @@ type projectDetails struct {
 	Repo           string         `json:"repo"`
 	DefaultBranch  string         `json:"defaultBranch"`
 	DefaultHarness string         `json:"agent,omitempty"`
+	AgentConfig    map[string]any `json:"agentConfig,omitempty"`
 	Tracker        map[string]any `json:"tracker,omitempty"`
 	SCM            map[string]any `json:"scm,omitempty"`
 	ResolveError   string         `json:"resolveError,omitempty"`
+}
+
+// setAgentConfigRequest mirrors the daemon's SetAgentConfigInput body for
+// PUT /api/v1/projects/{id}/agent-config.
+type setAgentConfigRequest struct {
+	Config map[string]any `json:"config"`
+}
+
+type projectSetConfigOptions struct {
+	set        []string
+	configJSON string
+	clear      bool
+	json       bool
 }
 
 type projectListResult struct {
@@ -86,6 +101,7 @@ func newProjectCommand(ctx *commandContext) *cobra.Command {
 	cmd.AddCommand(newProjectListCommand(ctx))
 	cmd.AddCommand(newProjectGetCommand(ctx))
 	cmd.AddCommand(newProjectAddCommand(ctx))
+	cmd.AddCommand(newProjectSetConfigCommand(ctx))
 	cmd.AddCommand(newProjectRemoveCommand(ctx))
 	return cmd
 }
@@ -179,6 +195,96 @@ func newProjectAddCommand(ctx *commandContext) *cobra.Command {
 	return cmd
 }
 
+func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
+	var opts projectSetConfigOptions
+	cmd := &cobra.Command{
+		Use:   "set-config <id>",
+		Short: "Set the per-project agent config",
+		Long: "Replace a project's per-project agent config (model, permissions, " +
+			"adapter-specific keys). The config is resolved into the launch command " +
+			"when a session spawns; the owning agent adapter validates the keys.\n\n" +
+			"Use --set key=value (repeatable) for string values, --config-json for a " +
+			"full JSON object, or --clear to remove all config.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+				return usageError{err}
+			}
+			if strings.TrimSpace(args[0]) == "" {
+				return usageError{errors.New("usage: project id is required")}
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := strings.TrimSpace(args[0])
+			config, err := buildAgentConfig(opts)
+			if err != nil {
+				return err
+			}
+			req := setAgentConfigRequest{Config: config}
+			var res projectResult
+			if err := ctx.putJSON(cmd.Context(), "projects/"+url.PathEscape(id)+"/agent-config", req, &res); err != nil {
+				return err
+			}
+			if opts.json {
+				return writeJSON(cmd.OutOrStdout(), res)
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "updated agent config for project %s\n", res.Project.ID)
+			return err
+		},
+	}
+	f := cmd.Flags()
+	f.StringArrayVar(&opts.set, "set", nil, "Config key=value (repeatable; values are strings)")
+	f.StringVar(&opts.configJSON, "config-json", "", "Full config as a JSON object")
+	f.BoolVar(&opts.clear, "clear", false, "Clear all agent config")
+	f.BoolVar(&opts.json, "json", false, "Output the updated project as JSON")
+	return cmd
+}
+
+// buildAgentConfig turns the set-config flags into the config map sent to the
+// daemon. The three input modes are mutually exclusive: --clear empties the
+// config, --config-json supplies the whole object, and --set builds it from
+// key=value pairs.
+func buildAgentConfig(opts projectSetConfigOptions) (map[string]any, error) {
+	modes := 0
+	if opts.clear {
+		modes++
+	}
+	if opts.configJSON != "" {
+		modes++
+	}
+	if len(opts.set) > 0 {
+		modes++
+	}
+	switch {
+	case modes == 0:
+		return nil, usageError{errors.New("usage: provide --set, --config-json, or --clear")}
+	case modes > 1:
+		return nil, usageError{errors.New("usage: --set, --config-json, and --clear are mutually exclusive")}
+	}
+
+	if opts.clear {
+		return map[string]any{}, nil
+	}
+	if opts.configJSON != "" {
+		var config map[string]any
+		if err := json.Unmarshal([]byte(opts.configJSON), &config); err != nil {
+			return nil, usageError{fmt.Errorf("--config-json is not a valid JSON object: %w", err)}
+		}
+		return config, nil
+	}
+
+	config := make(map[string]any, len(opts.set))
+	for _, pair := range opts.set {
+		key, value, ok := strings.Cut(pair, "=")
+		key = strings.TrimSpace(key)
+		if !ok || key == "" {
+			return nil, usageError{fmt.Errorf("invalid --set %q: expected key=value", pair)}
+		}
+		config[key] = value
+	}
+	return config, nil
+}
+
 func newProjectRemoveCommand(ctx *commandContext) *cobra.Command {
 	var opts projectRemoveOptions
 	cmd := &cobra.Command{
@@ -270,6 +376,7 @@ func writeProjectDetails(cmd *cobra.Command, res projectGetResult) error {
 		{label: "repo", value: p.Repo},
 		{label: "default branch", value: p.DefaultBranch},
 		{label: "default harness", value: p.DefaultHarness},
+		{label: "agent config", value: formatAgentConfig(p.AgentConfig)},
 		{label: "resolve error", value: p.ResolveError},
 	}
 	for _, f := range fields {
@@ -281,6 +388,19 @@ func writeProjectDetails(cmd *cobra.Command, res projectGetResult) error {
 		}
 	}
 	return nil
+}
+
+// formatAgentConfig renders the per-project agent config as compact JSON for the
+// `project get` text view. An empty config returns "" so the row is skipped.
+func formatAgentConfig(config map[string]any) string {
+	if len(config) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(config)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 func confirmProjectRemoval(cmd *cobra.Command, id string) (bool, error) {

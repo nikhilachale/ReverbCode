@@ -283,6 +283,51 @@ paths:
       summary: Fetch one project; discriminates ok vs degraded
       tags:
       - projects
+  /api/v1/projects/{id}/agent-config:
+    put:
+      operationId: setProjectAgentConfig
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectSetAgentConfigInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Replace a project's per-project agent config
+      tags:
+      - projects
   /api/v1/prs/{id}/merge:
     post:
       operationId: mergePR
@@ -916,6 +961,9 @@ components:
       type: object
     AddProjectInput:
       properties:
+        agentConfig:
+          additionalProperties: {}
+          type: object
         name:
           type:
           - "null"
@@ -1074,6 +1122,9 @@ components:
       properties:
         agent:
           type: string
+        agentConfig:
+          additionalProperties: {}
+          type: object
         defaultBranch:
           type: string
         id:
@@ -1119,6 +1170,16 @@ components:
           $ref: '#/components/schemas/Project'
       required:
       - project
+      type: object
+    ProjectSetAgentConfigInput:
+      properties:
+        config:
+          additionalProperties: {}
+          type:
+          - object
+          - "null"
+      required:
+      - config
       type: object
     ProjectSummary:
       properties:

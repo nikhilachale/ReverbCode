@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -13,6 +14,10 @@ import (
 
 // UpsertProject inserts or replaces a registered project row.
 func (s *Store) UpsertProject(ctx context.Context, r domain.ProjectRecord) error {
+	agentConfig, err := marshalAgentConfig(r.AgentConfig)
+	if err != nil {
+		return err
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.qw.UpsertProject(ctx, gen.UpsertProjectParams{
@@ -22,6 +27,7 @@ func (s *Store) UpsertProject(ctx context.Context, r domain.ProjectRecord) error
 		DisplayName:   r.DisplayName,
 		RegisteredAt:  r.RegisteredAt,
 		ArchivedAt:    nullTime(r.ArchivedAt),
+		AgentConfig:   agentConfig,
 	})
 }
 
@@ -34,7 +40,11 @@ func (s *Store) GetProject(ctx context.Context, id string) (domain.ProjectRecord
 	if err != nil {
 		return domain.ProjectRecord{}, false, fmt.Errorf("get project %s: %w", id, err)
 	}
-	return projectRowFromGen(p), true, nil
+	r, err := projectRowFromGen(p)
+	if err != nil {
+		return domain.ProjectRecord{}, false, fmt.Errorf("get project %s: %w", id, err)
+	}
+	return r, true, nil
 }
 
 // FindProjectByPath returns a project registered at path, active or archived.
@@ -46,7 +56,11 @@ func (s *Store) FindProjectByPath(ctx context.Context, path string) (domain.Proj
 	if err != nil {
 		return domain.ProjectRecord{}, false, fmt.Errorf("find project by path %s: %w", path, err)
 	}
-	return projectRowFromGen(p), true, nil
+	r, err := projectRowFromGen(p)
+	if err != nil {
+		return domain.ProjectRecord{}, false, fmt.Errorf("find project by path %s: %w", path, err)
+	}
+	return r, true, nil
 }
 
 // ListProjects returns active projects ordered by id.
@@ -57,7 +71,11 @@ func (s *Store) ListProjects(ctx context.Context) ([]domain.ProjectRecord, error
 	}
 	out := make([]domain.ProjectRecord, 0, len(rows))
 	for _, p := range rows {
-		out = append(out, projectRowFromGen(p))
+		r, err := projectRowFromGen(p)
+		if err != nil {
+			return nil, fmt.Errorf("list projects: %w", err)
+		}
+		out = append(out, r)
 	}
 	return out, nil
 }
@@ -76,18 +94,50 @@ func (s *Store) ArchiveProject(ctx context.Context, id string, at time.Time) (bo
 	return n > 0, nil
 }
 
-func projectRowFromGen(p gen.Project) domain.ProjectRecord {
+func projectRowFromGen(p gen.Project) (domain.ProjectRecord, error) {
+	agentConfig, err := unmarshalAgentConfig(p.AgentConfig)
+	if err != nil {
+		return domain.ProjectRecord{}, err
+	}
 	r := domain.ProjectRecord{
 		ID:            string(p.ID),
 		Path:          p.Path,
 		RepoOriginURL: p.RepoOriginURL,
 		DisplayName:   p.DisplayName,
 		RegisteredAt:  p.RegisteredAt,
+		AgentConfig:   agentConfig,
 	}
 	if p.ArchivedAt.Valid {
 		r.ArchivedAt = p.ArchivedAt.Time
 	}
-	return r
+	return r, nil
+}
+
+// marshalAgentConfig encodes a per-project agent config into the nullable JSON
+// column. A nil or empty map stores SQL NULL so an unset config round-trips back
+// to nil rather than an empty object.
+func marshalAgentConfig(cfg map[string]any) (sql.NullString, error) {
+	if len(cfg) == 0 {
+		return sql.NullString{}, nil
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return sql.NullString{}, fmt.Errorf("marshal agent config: %w", err)
+	}
+	return sql.NullString{String: string(data), Valid: true}, nil
+}
+
+// unmarshalAgentConfig decodes the nullable JSON column back into a map. SQL
+// NULL (an unset config) decodes to nil.
+func unmarshalAgentConfig(s sql.NullString) (map[string]any, error) {
+	if !s.Valid || s.String == "" {
+		return nil, nil
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(s.String), &cfg); err != nil {
+		return nil, fmt.Errorf("unmarshal agent config: %w", err)
+	}
+	return cfg, nil
 }
 
 func nullTime(t time.Time) sql.NullTime {

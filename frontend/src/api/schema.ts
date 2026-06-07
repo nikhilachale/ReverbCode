@@ -92,6 +92,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/agent-config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace a project's per-project agent config */
+        put: operations["setProjectAgentConfig"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/prs/{id}/merge": {
         parameters: {
             query?: never;
@@ -312,6 +329,9 @@ export interface components {
             requestId?: string;
         };
         AddProjectInput: {
+            agentConfig?: {
+                [key: string]: unknown;
+            };
             name?: null | string;
             path: string;
             projectId?: null | string;
@@ -369,6 +389,9 @@ export interface components {
         };
         Project: {
             agent?: string;
+            agentConfig?: {
+                [key: string]: unknown;
+            };
             defaultBranch: string;
             id: string;
             name: string;
@@ -385,6 +408,11 @@ export interface components {
         ProjectOrDegraded: components["schemas"]["Project"] | components["schemas"]["DegradedProject"];
         ProjectResponse: {
             project: components["schemas"]["Project"];
+        };
+        ProjectSetAgentConfigInput: {
+            config: {
+                [key: string]: unknown;
+            } | null;
         };
         ProjectSummary: {
             id: string;
@@ -854,6 +882,60 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RemoveProjectResult"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    setProjectAgentConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectSetAgentConfigInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResponse"];
                 };
             };
             /** @description Bad Request */

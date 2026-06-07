@@ -46,6 +46,9 @@ type runtimeController interface {
 
 // Store is the persistence surface needed by the internal session Manager.
 type Store interface {
+	// GetProject loads a project row so spawn can resolve its per-project agent
+	// config into the launch command. ok=false means the project is unknown.
+	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
@@ -155,11 +158,18 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
+	agentConfig, err := m.resolveAgentConfig(ctx, cfg.ProjectID)
+	if err != nil {
+		_ = m.workspace.Destroy(ctx, ws)
+		m.markSpawnFailedTerminated(ctx, id)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
+	}
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     string(id),
 		WorkspacePath: ws.Path,
 		Prompt:        prompt,
 		IssueID:       string(cfg.IssueID),
+		Config:        agentConfig,
 	})
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
@@ -195,6 +205,22 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: completed: %w", id, err)
 	}
 	return m.getRecord(ctx, id)
+}
+
+// resolveAgentConfig loads the project's per-project agent config so it can be
+// handed to the adapter's GetLaunchCommand. A missing project row yields a nil
+// config rather than an error: the project may be unregistered yet still have
+// live sessions, and an empty config simply means the adapter falls back to its
+// own defaults.
+func (m *Manager) resolveAgentConfig(ctx context.Context, projectID domain.ProjectID) (ports.AgentConfig, error) {
+	row, ok, err := m.store.GetProject(ctx, string(projectID))
+	if err != nil {
+		return nil, fmt.Errorf("resolve agent config: %w", err)
+	}
+	if !ok || len(row.AgentConfig) == 0 {
+		return nil, nil
+	}
+	return ports.AgentConfig(row.AgentConfig), nil
 }
 
 // markSpawnFailedTerminated best-effort parks an orphaned spawn as terminated.

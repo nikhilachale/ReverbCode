@@ -95,6 +95,38 @@ func TestManager_AddListGetRemove(t *testing.T) {
 	wantCode(t, err, "PROJECT_NOT_FOUND")
 }
 
+func TestManager_SetAgentConfig(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	repo := gitRepo(t)
+
+	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	cfg := map[string]any{"model": "claude-opus-4-5"}
+	proj, err := m.SetAgentConfig(ctx, "ao", project.SetAgentConfigInput{Config: cfg})
+	if err != nil {
+		t.Fatalf("SetAgentConfig: %v", err)
+	}
+	if proj.AgentConfig["model"] != "claude-opus-4-5" {
+		t.Fatalf("returned config = %#v", proj.AgentConfig)
+	}
+
+	// The config persists and shows up on a fresh Get.
+	got, err := m.Get(ctx, "ao")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Project == nil || got.Project.AgentConfig["model"] != "claude-opus-4-5" {
+		t.Fatalf("Get config = %#v", got.Project)
+	}
+
+	// Setting on an unknown project is a clean not-found.
+	_, err = m.SetAgentConfig(ctx, "ghost", project.SetAgentConfigInput{Config: cfg})
+	wantCode(t, err, "PROJECT_NOT_FOUND")
+}
+
 func TestManager_ReaddAfterRemove(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)

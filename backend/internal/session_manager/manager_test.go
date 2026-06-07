@@ -17,11 +17,16 @@ var ctx = context.Background()
 type fakeStore struct {
 	sessions map[domain.SessionID]domain.SessionRecord
 	pr       map[domain.SessionID]domain.PRFacts
+	projects map[string]domain.ProjectRecord
 	num      int
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, pr: map[domain.SessionID]domain.PRFacts{}}
+	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, pr: map[domain.SessionID]domain.PRFacts{}, projects: map[string]domain.ProjectRecord{}}
+}
+func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
+	r, ok := f.projects[id]
+	return r, ok, nil
 }
 func (f *fakeStore) CreateSession(_ context.Context, rec domain.SessionRecord) (domain.SessionRecord, error) {
 	f.num++
@@ -135,6 +140,22 @@ type fakeAgents struct{}
 
 func (fakeAgents) Agent(domain.AgentHarness) (ports.Agent, bool) { return fakeAgent{}, true }
 
+// recordingAgent captures the LaunchConfig it is handed so a test can assert the
+// session manager resolved and forwarded a project's agent config.
+type recordingAgent struct {
+	fakeAgent
+	lastConfig ports.AgentConfig
+}
+
+func (a *recordingAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchConfig) ([]string, error) {
+	a.lastConfig = cfg.Config
+	return []string{"launch"}, nil
+}
+
+type singleAgent struct{ agent ports.Agent }
+
+func (s singleAgent) Agent(domain.AgentHarness) (ports.Agent, bool) { return s.agent, true }
+
 type fakeWorkspace struct {
 	destroyErr error
 	destroyed  int
@@ -173,6 +194,31 @@ func seedTerminal(st *fakeStore, id domain.SessionID, meta domain.SessionMetadat
 }
 func mkLive(id domain.SessionID) domain.SessionRecord {
 	return domain.SessionRecord{ID: id, ProjectID: "mer", Metadata: domain.SessionMetadata{WorkspacePath: "/ws/" + string(id), RuntimeHandleID: "h1"}, Activity: domain.Activity{State: domain.ActivityActive}}
+}
+
+func TestSpawn_ResolvesProjectAgentConfig(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", AgentConfig: map[string]any{"model": "claude-opus-4-5"}}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastConfig["model"] != "claude-opus-4-5" {
+		t.Fatalf("launch config = %#v, want model resolved from project", agent.lastConfig)
+	}
+
+	// A project with no stored config yields a nil AgentConfig (adapter defaults).
+	st.projects["bare"] = domain.ProjectRecord{ID: "bare"}
+	agent.lastConfig = ports.AgentConfig{"stale": true}
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "bare", Kind: domain.KindWorker}); err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastConfig != nil {
+		t.Fatalf("launch config = %#v, want nil for project without config", agent.lastConfig)
+	}
 }
 
 func TestSpawn_AssignsIDAndGoesIdle(t *testing.T) {

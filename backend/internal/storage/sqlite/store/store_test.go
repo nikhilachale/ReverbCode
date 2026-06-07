@@ -71,6 +71,44 @@ func TestProjectCRUDAndArchive(t *testing.T) {
 	}
 }
 
+func TestProjectAgentConfigRoundTrips(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// A config with mixed value kinds survives the JSON round trip.
+	cfg := map[string]any{"model": "claude-opus-4-5", "permissions": "accept-edits"}
+	if err := s.UpsertProject(ctx, domain.ProjectRecord{
+		ID: "cfg", Path: "/tmp/cfg", RegisteredAt: now, AgentConfig: cfg,
+	}); err != nil {
+		t.Fatalf("upsert with config: %v", err)
+	}
+	got, ok, err := s.GetProject(ctx, "cfg")
+	if err != nil || !ok {
+		t.Fatalf("get: ok=%v err=%v", ok, err)
+	}
+	if got.AgentConfig["model"] != "claude-opus-4-5" || got.AgentConfig["permissions"] != "accept-edits" {
+		t.Fatalf("agent config = %#v", got.AgentConfig)
+	}
+
+	// An unset config round-trips back to nil rather than an empty object.
+	seedProject(t, s, "nocfg")
+	got, _, _ = s.GetProject(ctx, "nocfg")
+	if got.AgentConfig != nil {
+		t.Fatalf("unset config = %#v, want nil", got.AgentConfig)
+	}
+
+	// Clearing replaces a previously-set config with nil.
+	if err := s.UpsertProject(ctx, domain.ProjectRecord{
+		ID: "cfg", Path: "/tmp/cfg", RegisteredAt: now, AgentConfig: nil,
+	}); err != nil {
+		t.Fatalf("clear config: %v", err)
+	}
+	if got, _, _ := s.GetProject(ctx, "cfg"); got.AgentConfig != nil {
+		t.Fatalf("cleared config = %#v, want nil", got.AgentConfig)
+	}
+}
+
 func TestSessionCreateAssignsPerProjectID(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

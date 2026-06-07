@@ -107,6 +107,7 @@ type Project struct {
 	DisplayName   string
 	RegisteredAt  time.Time
 	ArchivedAt    sql.NullTime
+	AgentConfig   sql.NullString
 }
 
 type Session struct {
