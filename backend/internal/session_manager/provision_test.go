@@ -89,32 +89,3 @@ func TestRunPostCreate(t *testing.T) {
 		t.Fatal("expected error from failing post-create command")
 	}
 }
-
-func TestProjectRulesReadsFile(t *testing.T) {
-	project := t.TempDir()
-	if err := os.WriteFile(filepath.Join(project, ".rules.md"), []byte("run tests\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	rec := domain.ProjectRecord{Path: project, Config: domain.ProjectConfig{
-		AgentRules:     "use conventional commits",
-		AgentRulesFile: ".rules.md",
-	}}
-	rules, err := projectRules(rec)
-	if err != nil {
-		t.Fatalf("projectRules: %v", err)
-	}
-	if want := "use conventional commits\n\nrun tests"; rules != want {
-		t.Fatalf("rules = %q, want %q", rules, want)
-	}
-
-	// A missing rules file is optional context, not a hard failure: it returns
-	// the inline rules without aborting the spawn.
-	rec.Config.AgentRulesFile = "nope.md"
-	got, err := projectRules(rec)
-	if err != nil {
-		t.Fatalf("missing rules file should not error: %v", err)
-	}
-	if got != "use conventional commits" {
-		t.Fatalf("rules with missing file = %q, want inline rules only", got)
-	}
-}

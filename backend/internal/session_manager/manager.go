@@ -135,7 +135,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// so a project can default workers to one agent and orchestrators to another.
 	cfg.Harness = effectiveHarness(cfg.Harness, cfg.Kind, project.Config)
 
-	prompt, err := m.buildSpawnPrompt(ctx, cfg, project)
+	prompt, err := m.buildSpawnPrompt(ctx, cfg)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: prompt: %w", err)
 	}
@@ -486,20 +486,11 @@ func buildPrompt(cfg ports.SpawnConfig) string {
 	}
 }
 
-func (m *Manager) buildSpawnPrompt(ctx context.Context, cfg ports.SpawnConfig, project domain.ProjectRecord) (string, error) {
+func (m *Manager) buildSpawnPrompt(ctx context.Context, cfg ports.SpawnConfig) (string, error) {
 	prompt := buildPrompt(cfg)
-
-	// Project-level rules apply to every agent prompt; OrchestratorRules layer
-	// on top for orchestrator sessions only.
-	rules, err := projectRules(project)
-	if err != nil {
-		return "", err
-	}
-	prompt = appendPromptSection(prompt, rules)
 
 	switch cfg.Kind {
 	case domain.KindOrchestrator:
-		prompt = appendPromptSection(prompt, project.Config.OrchestratorRules)
 		return appendPromptSection(orchestratorPrompt(cfg.ProjectID), prompt), nil
 	case domain.KindWorker:
 		orchestratorID, ok, err := m.activeOrchestratorSessionID(ctx, cfg.ProjectID)
@@ -511,28 +502,6 @@ func (m *Manager) buildSpawnPrompt(ctx context.Context, cfg ports.SpawnConfig, p
 		}
 	}
 	return prompt, nil
-}
-
-// projectRules assembles the project's inline AgentRules and the contents of its
-// AgentRulesFile (read relative to the project path). A missing rules file is
-// treated as absent optional context — not a hard dependency — so a deleted,
-// renamed, or never-created file does not fail every spawn for the project. Only
-// a real read error (e.g. permissions) surfaces.
-func projectRules(project domain.ProjectRecord) (string, error) {
-	rules := project.Config.AgentRules
-	if file := strings.TrimSpace(project.Config.AgentRulesFile); file != "" {
-		path := file
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(project.Path, file)
-		}
-		switch data, err := os.ReadFile(path); {
-		case err == nil:
-			rules = appendPromptSection(rules, strings.TrimRight(string(data), "\n"))
-		case !errors.Is(err, os.ErrNotExist):
-			return "", fmt.Errorf("agent rules file: %w", err)
-		}
-	}
-	return rules, nil
 }
 
 func (m *Manager) activeOrchestratorSessionID(ctx context.Context, project domain.ProjectID) (domain.SessionID, bool, error) {

@@ -10,12 +10,11 @@ import (
 // JSON blob per project and resolved at spawn. Each field is typed and
 // validated; there is no free-form map.
 //
-// Some fields are consumed at spawn today (DefaultBranch, Env, Symlinks,
-// PostCreate, the rules, AgentConfig, and the role overrides). Others are
-// persisted and validated but not yet consumed — Tracker, SCM, and
-// OpencodeIssueSessionStrategy await the infrastructure that will read them, and
-// SessionPrefix currently feeds only the display prefix (session-id generation
-// is unchanged).
+// Only fields with a live consumer are modeled: DefaultBranch, Env, Symlinks,
+// PostCreate, AgentConfig, and the role overrides are consumed at spawn;
+// SessionPrefix feeds the display prefix. Settings whose consumers do not yet
+// exist (tracker/SCM per-project config, prompt rules) are intentionally absent
+// and land in focused follow-up PRs alongside the code that reads them.
 type ProjectConfig struct {
 	// DefaultBranch is the base branch new session worktrees are created from.
 	DefaultBranch string `json:"defaultBranch,omitempty"`
@@ -30,26 +29,11 @@ type ProjectConfig struct {
 	// PostCreate are shell commands run in the workspace after it is created.
 	PostCreate []string `json:"postCreate,omitempty"`
 
-	// AgentRules are inline rules appended to every agent prompt for the project.
-	AgentRules string `json:"agentRules,omitempty"`
-	// AgentRulesFile is a path (relative to the project) whose contents are
-	// appended to every agent prompt.
-	AgentRulesFile string `json:"agentRulesFile,omitempty"`
-	// OrchestratorRules are inline rules appended to orchestrator prompts.
-	OrchestratorRules string `json:"orchestratorRules,omitempty"`
-
 	// AgentConfig is the default agent config for the project.
 	AgentConfig AgentConfig `json:"agentConfig,omitempty"`
 	// Worker and Orchestrator are role-specific harness/agent-config overrides.
 	Worker       RoleOverride `json:"worker,omitempty"`
 	Orchestrator RoleOverride `json:"orchestrator,omitempty"`
-
-	// Tracker selects and configures the project's issue tracker (not yet consumed).
-	Tracker TrackerConfig `json:"tracker,omitempty"`
-	// SCM selects and configures the project's source-control integration (not yet consumed).
-	SCM SCMConfig `json:"scm,omitempty"`
-	// OpencodeIssueSessionStrategy controls OpenCode issue-session reuse (not yet consumed).
-	OpencodeIssueSessionStrategy string `json:"opencodeIssueSessionStrategy,omitempty"`
 }
 
 // RoleOverride overrides the harness and/or agent config for a session role.
@@ -58,49 +42,15 @@ type RoleOverride struct {
 	AgentConfig AgentConfig  `json:"agentConfig,omitempty"`
 }
 
-// TrackerConfig selects and configures a project's issue tracker.
-type TrackerConfig struct {
-	Plugin string `json:"plugin,omitempty"`
-	TeamID string `json:"teamId,omitempty"`
-}
-
-// SCMConfig selects and configures a project's source-control integration.
-type SCMConfig struct {
-	Plugin  string            `json:"plugin,omitempty"`
-	Webhook *SCMWebhookConfig `json:"webhook,omitempty"`
-}
-
-// SCMWebhookConfig describes SCM webhook acceleration settings.
-type SCMWebhookConfig struct {
-	Path            string `json:"path,omitempty"`
-	SecretEnvVar    string `json:"secretEnvVar,omitempty"`
-	SignatureHeader string `json:"signatureHeader,omitempty"`
-	EventHeader     string `json:"eventHeader,omitempty"`
-	DeliveryHeader  string `json:"deliveryHeader,omitempty"`
-	MaxBodyBytes    int    `json:"maxBodyBytes,omitempty"`
-}
-
-// The OpenCode issue-session strategies.
-const (
-	OpencodeSessionReuse  = "reuse"
-	OpencodeSessionDelete = "delete"
-	OpencodeSessionIgnore = "ignore"
-)
-
-// Documented per-project defaults (mirrors the legacy agent-orchestrator.yaml).
-const (
-	DefaultBranchName  = "main"   // base branch when none is configured
-	DefaultTrackerName = "github" // issue tracker defaults to GitHub issues
-)
+// DefaultBranchName is the base branch used when a project configures none.
+const DefaultBranchName = "main"
 
 // DefaultProjectConfig returns the config a project has when it sets nothing:
-// branch "main" and the GitHub issue tracker. Every other field defaults to its
-// zero value (no env/symlinks/post-create/rules, agent + role defaults, no SCM
-// webhook, no OpenCode strategy override).
+// branch "main". Every other field defaults to its zero value (no
+// env/symlinks/post-create, agent + role defaults).
 func DefaultProjectConfig() ProjectConfig {
 	return ProjectConfig{
 		DefaultBranch: DefaultBranchName,
-		Tracker:       TrackerConfig{Plugin: DefaultTrackerName},
 	}
 }
 
@@ -110,9 +60,6 @@ func (c ProjectConfig) WithDefaults() ProjectConfig {
 	def := DefaultProjectConfig()
 	if c.DefaultBranch == "" {
 		c.DefaultBranch = def.DefaultBranch
-	}
-	if c.Tracker.Plugin == "" {
-		c.Tracker.Plugin = def.Tracker.Plugin
 	}
 	return c
 }
@@ -136,11 +83,6 @@ func (c ProjectConfig) Validate() error {
 		if err := ro.AgentConfig.Validate(); err != nil {
 			return fmt.Errorf("%s.%w", role, err)
 		}
-	}
-	switch c.OpencodeIssueSessionStrategy {
-	case "", OpencodeSessionReuse, OpencodeSessionDelete, OpencodeSessionIgnore:
-	default:
-		return fmt.Errorf("opencodeIssueSessionStrategy: want one of reuse, delete, ignore")
 	}
 	return nil
 }

@@ -14,8 +14,6 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"good role override", ProjectConfig{Worker: RoleOverride{Harness: HarnessCodex}}, false},
 		{"unknown role harness", ProjectConfig{Orchestrator: RoleOverride{Harness: "nope"}}, true},
 		{"bad role agent config", ProjectConfig{Worker: RoleOverride{AgentConfig: AgentConfig{Permissions: "nope"}}}, true},
-		{"good opencode strategy", ProjectConfig{OpencodeIssueSessionStrategy: OpencodeSessionReuse}, false},
-		{"bad opencode strategy", ProjectConfig{OpencodeIssueSessionStrategy: "sometimes"}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -29,18 +27,14 @@ func TestProjectConfigValidate(t *testing.T) {
 func TestDefaultProjectConfig(t *testing.T) {
 	def := DefaultProjectConfig()
 
-	// The two documented non-empty defaults.
+	// The one documented non-empty default.
 	if def.DefaultBranch != "main" {
 		t.Fatalf("default DefaultBranch = %q, want main", def.DefaultBranch)
 	}
-	if def.Tracker.Plugin != "github" {
-		t.Fatalf("default tracker = %q, want github", def.Tracker.Plugin)
-	}
 
-	// Every other field defaults to its zero value: clearing the two documented
-	// defaults must leave the config completely empty.
+	// Every other field defaults to its zero value: clearing the documented
+	// default must leave the config completely empty.
 	def.DefaultBranch = ""
-	def.Tracker = TrackerConfig{}
 	if !def.IsZero() {
 		t.Fatalf("default config has unexpected non-zero fields: %#v", def)
 	}
@@ -49,17 +43,16 @@ func TestDefaultProjectConfig(t *testing.T) {
 func TestProjectConfigWithDefaults(t *testing.T) {
 	// An unset config gets the documented defaults.
 	got := (ProjectConfig{}).WithDefaults()
-	if got.DefaultBranch != DefaultBranchName || got.Tracker.Plugin != DefaultTrackerName {
-		t.Fatalf("WithDefaults = %#v, want branch=main tracker=github", got)
+	if got.DefaultBranch != DefaultBranchName {
+		t.Fatalf("WithDefaults = %#v, want branch=main", got)
 	}
 
 	// Set fields are preserved, not overwritten.
 	got = (ProjectConfig{
 		DefaultBranch: "develop",
-		Tracker:       TrackerConfig{Plugin: "linear"},
 		AgentConfig:   AgentConfig{Model: "m"},
 	}).WithDefaults()
-	if got.DefaultBranch != "develop" || got.Tracker.Plugin != "linear" {
+	if got.DefaultBranch != "develop" {
 		t.Fatalf("WithDefaults overwrote set fields: %#v", got)
 	}
 	if got.AgentConfig.Model != "m" {

@@ -400,20 +400,14 @@ export interface components {
         };
         ProjectConfig: {
             agentConfig?: components["schemas"]["AgentConfig"];
-            agentRules?: string;
-            agentRulesFile?: string;
             defaultBranch?: string;
             env?: {
                 [key: string]: string;
             };
-            opencodeIssueSessionStrategy?: string;
             orchestrator?: components["schemas"]["RoleOverride"];
-            orchestratorRules?: string;
             postCreate?: string[];
-            scm?: components["schemas"]["SCMConfig"];
             sessionPrefix?: string;
             symlinks?: string[];
-            tracker?: components["schemas"]["TrackerConfig"];
             worker?: components["schemas"]["RoleOverride"];
         };
         ProjectGetResponse: {
@@ -461,18 +455,6 @@ export interface components {
             killed?: boolean;
             ok: boolean;
             sessionId: string;
-        };
-        SCMConfig: {
-            plugin?: string;
-            webhook?: components["schemas"]["SCMWebhookConfig"];
-        };
-        SCMWebhookConfig: {
-            deliveryHeader?: string;
-            eventHeader?: string;
-            maxBodyBytes?: number;
-            path?: string;
-            secretEnvVar?: string;
-            signatureHeader?: string;
         };
         SendSessionMessageRequest: {
             message: string;
@@ -544,10 +526,6 @@ export interface components {
             kind?: "worker" | "orchestrator";
             projectId: string;
             prompt?: string;
-        };
-        TrackerConfig: {
-            plugin?: string;
-            teamId?: string;
         };
     };
     responses: never;

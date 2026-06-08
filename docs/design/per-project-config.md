@@ -1,12 +1,15 @@
 # Design: typed per-project configuration
 
-Status: **implemented** — the full per-project `ProjectConfig` is typed,
-validated, persisted (one `projects.config` JSON column), and surfaced via
-`ao project set-config` + `PUT /projects/{id}/config`. Consumption is wired at
-spawn for `defaultBranch`, `env`, `symlinks`, `postCreate`, the rules,
-`agentConfig`, and the `worker`/`orchestrator` role overrides. `tracker`, `scm`,
-`opencodeIssueSessionStrategy`, and `sessionPrefix`→id are stored + validated but
-not yet consumed (their consumers do not exist — see "deferred" below).
+Status: **partially implemented** — `ProjectConfig` is typed, validated,
+persisted (one `projects.config` JSON column), and surfaced via
+`ao project set-config` + `PUT /projects/{id}/config`. The struct deliberately
+carries only fields with a live consumer: `defaultBranch`, `env`, `symlinks`,
+`postCreate`, `agentConfig`, and the `worker`/`orchestrator` role overrides are
+wired at spawn; `sessionPrefix` feeds the display prefix. Settings whose
+consumers do not yet exist — per-project `tracker`/`scm` config and prompt
+`rules` — are intentionally **not** modeled yet and land in focused follow-up
+PRs alongside the code that reads them (see "Sequencing" below). Cross-agent
+`agentConfig.model`/`permissions` support is tracked in #157.
 
 ## Goal
 
@@ -66,7 +69,7 @@ type AgentConfig struct {            // implemented
 }
 func (c AgentConfig) Validate() error { ... }
 
-// target — assembled incrementally, one slice per PR
+// implemented today — only fields with a live consumer are modeled
 type ProjectConfig struct {
     DefaultBranch string
     SessionPrefix string
@@ -76,10 +79,10 @@ type ProjectConfig struct {
     Env           map[string]string
     Symlinks      []string
     PostCreate    []string
-    AgentRules    string
-    Tracker       TrackerConfig         // adapter-validated
-    SCM           SCMConfig             // adapter-validated
-    // ...
+    // future slices add fields here as their consumers land:
+    //   AgentRules / AgentRulesFile / OrchestratorRules (prompt rules)
+    //   Tracker TrackerConfig   // adapter-validated
+    //   SCM     SCMConfig       // adapter-validated
 }
 ```
 
