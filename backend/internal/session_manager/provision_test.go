@@ -76,6 +76,19 @@ func TestApplySymlinks(t *testing.T) {
 	}
 }
 
+func TestApplySymlinksRejectsParentTraversal(t *testing.T) {
+	project := t.TempDir()
+	workspace := t.TempDir()
+	// A "..", "/" or "../" segment escapes the project tree and must be refused
+	// before any stat/link runs, so a project config cannot link in arbitrary
+	// host files.
+	for _, bad := range []string{"../escape", "/etc/passwd", "a/../../b", ".."} {
+		if err := applySymlinks(project, workspace, []string{bad}); err == nil {
+			t.Fatalf("applySymlinks(%q) accepted an unsafe path", bad)
+		}
+	}
+}
+
 func TestRunPostCreate(t *testing.T) {
 	workspace := t.TempDir()
 	if err := runPostCreate(context.Background(), workspace, []string{"echo hi > out.txt"}); err != nil {

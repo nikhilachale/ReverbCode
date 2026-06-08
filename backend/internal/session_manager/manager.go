@@ -579,18 +579,24 @@ func (m *Manager) provisionWorkspace(ctx context.Context, project domain.Project
 
 // applySymlinks links each repo-relative path into the workspace. A source that
 // does not exist is skipped (symlinks are a convenience for optional files like
-// .env); a real link failure aborts.
+// .env); a real link failure aborts. Paths must be repo-relative with no
+// parent traversal (no leading "/", no ".." segment) — a bad path is refused
+// up front so a project config cannot escape the project or workspace tree.
 func applySymlinks(projectPath, workspacePath string, symlinks []string) error {
 	for _, rel := range symlinks {
 		rel = strings.TrimSpace(rel)
 		if rel == "" {
 			continue
 		}
-		source := filepath.Join(projectPath, rel)
+		clean, err := safeRelPath(rel)
+		if err != nil {
+			return fmt.Errorf("symlink %q: %w", rel, err)
+		}
+		source := filepath.Join(projectPath, clean)
 		if _, err := os.Stat(source); err != nil {
 			continue
 		}
-		target := filepath.Join(workspacePath, rel)
+		target := filepath.Join(workspacePath, clean)
 		if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
 			return fmt.Errorf("symlink %q: %w", rel, err)
 		}
@@ -602,6 +608,25 @@ func applySymlinks(projectPath, workspacePath string, symlinks []string) error {
 		}
 	}
 	return nil
+}
+
+// safeRelPath confines rel to a repo-relative path: no absolute paths and no
+// ".." segments (before or after Clean). The cleaned form is returned so
+// callers join it against project/workspace roots safely.
+func safeRelPath(rel string) (string, error) {
+	if filepath.IsAbs(rel) || strings.HasPrefix(rel, "/") || strings.HasPrefix(rel, `\`) {
+		return "", fmt.Errorf("path must be repo-relative")
+	}
+	clean := filepath.Clean(rel)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || clean == "." || clean == "" {
+		return "", fmt.Errorf("path must be repo-relative")
+	}
+	for _, seg := range strings.Split(filepath.ToSlash(clean), "/") {
+		if seg == ".." {
+			return "", fmt.Errorf("path must be repo-relative")
+		}
+	}
+	return clean, nil
 }
 
 // runPostCreate runs each post-create command in the workspace via the platform
