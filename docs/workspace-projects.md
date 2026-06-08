@@ -13,8 +13,9 @@ workspace implementation.
 ## Team presentation summary
 
 The decision is: **AO composes a session workspace from native git worktrees of
-selected child repos.** The parent root is shared context. Normal workers can see
-root files through links, but they cannot own or edit those files.
+every registered child repo.** The parent root is shared context. Normal workers
+see root files through read-only symlinks, but they cannot own or edit those
+files.
 
 ```mermaid
 flowchart LR
@@ -26,19 +27,21 @@ flowchart LR
     end
 
     subgraph Session["Session workspace: ao/project-abc-7"]
-        RootLinks["root context links<br/>read-only by AO policy"]
+        RootLinks["read-only root symlinks<br/>AO policy/enforced"]
         CLIWT["cli/<br/>git worktree<br/>branch ao/project-abc-7"]
         APIWT["api/<br/>git worktree<br/>branch ao/project-abc-7"]
+        PFWT["pf/<br/>git worktree<br/>branch ao/project-abc-7"]
     end
 
-    RootFiles -. "symlink/context" .-> RootLinks
+    RootFiles -. "read-only symlink/context" .-> RootLinks
     CLIRepo ==>|"git worktree add"| CLIWT
     APIRepo ==>|"git worktree add"| APIWT
-    PFRepo -. "not targeted" .-> Session
+    PFRepo ==>|"git worktree add"| PFWT
 ```
 
-A worker that targets `cli,api` receives exactly the root context plus those two
-child repos. `pf/` is not provisioned unless requested.
+A workspace worker receives the root context plus **every registered child repo**.
+There is no `--targets` subset in this model; each agent sees the whole
+workspace shape.
 
 ```mermaid
 sequenceDiagram
@@ -49,26 +52,27 @@ sequenceDiagram
     participant Git as gitworktree adapter
     participant Agent as Agent runtime
 
-    User->>AO: ao spawn --project project-abc --targets cli,api
+    User->>AO: ao spawn --project project-abc
     AO->>DB: create session row
-    AO->>DB: validate workspace repos cli/api
+    AO->>DB: load all registered workspace repos
     AO->>Git: create composite root
-    Git->>Git: link root context files
+    Git->>Git: create read-only root context symlinks
     Git->>Git: git -C canonical/cli worktree add session/cli ao/session
     Git->>Git: git -C canonical/api worktree add session/api ao/session
-    Git-->>AO: WorkspaceInfo(root, targets)
-    AO->>DB: persist session_targets + root manifest
+    Git->>Git: git -C canonical/pf worktree add session/pf ao/session
+    Git-->>AO: WorkspaceInfo(root, worktrees)
+    AO->>DB: persist session_worktrees + root manifest
     AO->>Agent: launch with cwd=session root
     AO->>DB: mark spawned
 ```
 
-Root files have a separate access model from child repo targets:
+Root files have a separate access model from child repo worktrees:
 
 ```mermaid
 flowchart TD
     Spawn["Spawn workspace session"] --> RootMode{"root_access?"}
-    RootMode -->|read default| ReadOnly["Link root context<br/>for reading only"]
-    ReadOnly --> WorkerEdits["Worker edits only<br/>inside targeted repos"]
+    RootMode -->|read default| ReadOnly["Create read-only root symlinks<br/>for reading only"]
+    ReadOnly --> WorkerEdits["Worker edits only<br/>inside child repo worktrees"]
     WorkerEdits --> PRs["Open PRs per child repo"]
 
     RootMode -->|write explicit| Lock["Acquire project<br/>root-write lock"]
@@ -79,15 +83,14 @@ flowchart TD
     ReadOnly -. "write attempt" .-> Violation["Root write violation<br/>refuse to normalize/delete"]
 ```
 
-The durable model makes workspaces explicit instead of hiding target repos in a
-JSON blob:
+The durable model records every child worktree that AO provisions for a session:
 
 ```mermaid
 erDiagram
     PROJECTS ||--o{ WORKSPACE_REPOS : contains
     PROJECTS ||--o{ SESSIONS : owns
-    SESSIONS ||--o{ SESSION_TARGETS : provisions
-    WORKSPACE_REPOS ||--o{ SESSION_TARGETS : selected_as
+    SESSIONS ||--o{ SESSION_WORKTREES : provisions
+    WORKSPACE_REPOS ||--o{ SESSION_WORKTREES : materializes
     PROJECTS ||--o| PROJECT_ROOT_WRITE_LOCKS : guards
     SESSIONS ||--o| PROJECT_ROOT_WRITE_LOCKS : holds
 
@@ -113,7 +116,7 @@ erDiagram
         text root_access "read | write"
     }
 
-    SESSION_TARGETS {
+    SESSION_WORKTREES {
         text session_id FK
         text repo_name FK
         text branch
@@ -156,10 +159,9 @@ represent one composite session root plus N child git worktrees.
   containing registered child git repositories.
 - **Workspace repo**: one named child repository under a workspace project, such
   as `cli`, `api`, or `pf`.
-- **Session target**: one workspace repo selected for a session.
 - **Composite workspace**: the session root directory handed to the agent. For a
-  multi-target workspace session it contains root context files plus selected
-  target directories, each target directory being a real git checkout/worktree.
+  workspace session it contains root context symlinks plus every registered
+  workspace repo directory, each child directory being a real git checkout/worktree.
 
 ## Chosen provisioning model: composed child worktrees
 
@@ -172,15 +174,16 @@ canonical/project-abc/          # may be plain, non-git parent
   api/                          # git repo
 
 managed/project-abc/project-abc-7/
-  package.json -> canonical/project-abc/package.json  # root context link
+  package.json -> canonical/project-abc/package.json  # read-only root symlink
   cli/                          # git worktree of canonical cli
   api/                          # git worktree of canonical api
+  pf/                           # git worktree of canonical pf
 ```
 
-For each selected target, AO runs the equivalent of:
+For every registered workspace repo, AO runs the equivalent of:
 
 ```bash
-git -C <canonical>/<target> worktree add <session-root>/<target> <branch>
+git -C <canonical>/<repo> worktree add <session-root>/<repo> <branch>
 ```
 
 ### Why this fits AO better
@@ -192,10 +195,10 @@ git -C <canonical>/<target> worktree add <session-root>/<target> <branch>
   provisioning.
 - It keeps the parent folder non-invasive. AO does not write `.git/`,
   `.gitmodules`, or commits into the user's workspace root.
-- Per-repo PRs stay natural. Each target repo has its own origin and branch, and
+- Per-repo PRs stay natural. Each child repo has its own origin and branch, and
   the current `PR -> session` attribution still works.
 - Cleanup remains worktree-based: remove each child worktree without `--force`,
-  then prune. If one target refuses removal because it is dirty or locked, the
+  then prune. If one child repo refuses removal because it is dirty or locked, the
   composite cleanup is skipped/partial and retried later, matching AO's current
   safety posture.
 
@@ -208,9 +211,9 @@ git -C <canonical>/<target> worktree add <session-root>/<target> <branch>
 - Root files outside child repos are not protected by git. They need an explicit
   policy; otherwise cleanup can silently delete changes or concurrent sessions
   can overwrite each other.
-- Branch operations are per target. The first cut should use one shared branch
-  name across selected targets (`ao/<session-id>`), while storing the branch per
-  target so per-target branches remain possible later.
+- Branch operations are per child repo. The first cut should use one shared
+  branch name across all child repos (`ao/<session-id>`), while storing the
+  branch per child worktree so per-repo branch state remains explicit.
 - If a user manually removes one child worktree, restore/destroy must detect a
   partially broken composite rather than treating the session as healthy.
 
@@ -221,12 +224,12 @@ session-owned outputs. Normal worker sessions must not edit them.
 
 Use root context links for normal sessions:
 
-1. At workspace creation, link root-level files/directories that are not
+1. At workspace creation, symlink root-level files/directories that are not
    registered workspace repos and not `.git` into the composite root.
-2. Prefer symlinks because they make the workspace shape match the canonical
-   parent and avoid a copy-back path.
+2. Establish those symlinks as read-only root context by AO policy: they make
+   the workspace shape match the canonical parent and avoid a copy-back path.
 3. Treat those links as read-only by AO policy: root paths are for context; all
-   durable worker edits belong under selected target repos.
+   durable worker edits belong under child repo worktrees.
 4. Do not copy root modifications back to canonical. With symlinks there is no
    copy-back path; an attempted write is either rejected by enforcement or is an
    immediate write to canonical and must be treated as a policy violation.
@@ -240,7 +243,7 @@ enforcement layer in addition to symlinks:
 
 - spawn prompts and session instructions must explicitly forbid root edits for
   normal worker sessions;
-- session tooling should treat writes outside selected target repos as a root
+- session tooling should treat writes outside child repo worktrees as a root
   write violation;
 - cleanup/restore should detect root-context changes and refuse to silently
   discard or normalize them;
@@ -255,7 +258,7 @@ Root edits require an explicit **root-write session**:
   root-write session per workspace project.
 - Root-write sessions operate on the canonical parent root, not on per-session
   copies. There is no last-write-wins merge from worker workspaces.
-- Normal target-only workers can still have read-only root context links while a
+- Normal workers can still have read-only root context links while a
   root-write session exists, but AO should warn that root context may change
   under them.
 - If root files become a frequent code-change surface, the parent should be made
@@ -329,8 +332,8 @@ implementation.
 
 ## Schema direction
 
-Prefer explicit tables over a JSON column because session-target lookups and SCM
-observer enumeration are first-class operations.
+Prefer explicit tables over a JSON column because per-child worktree cleanup,
+restore, and SCM observer enumeration are first-class operations.
 
 Minimum durable additions:
 
@@ -348,7 +351,7 @@ CREATE TABLE workspace_repos (
   UNIQUE (project_id, relative_path)
 );
 
-CREATE TABLE session_targets (
+CREATE TABLE session_worktrees (
   session_id    TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   repo_name     TEXT NOT NULL,
   branch        TEXT NOT NULL,
@@ -359,7 +362,8 @@ CREATE TABLE session_targets (
 
 Keep `sessions.workspace_path` as the composite root handed to the runtime and
 agent. Keep `sessions.branch` as the default/shared branch for compatibility,
-but treat `session_targets.branch` as authoritative for workspace projects.
+but treat `session_worktrees.branch` as authoritative per child repo for
+workspace projects.
 
 Root access also needs durable state. Prefer explicit tables/columns such as:
 
@@ -384,11 +388,10 @@ Likely port changes:
 
 ```go
 type WorkspaceConfig struct {
-    ProjectID domain.ProjectID
-    SessionID domain.SessionID
-    Branch    string
-    Targets    []string // empty means single-repo project or all/default targets by policy
-    RootAccess string   // "read" for normal workers, "write" only when orchestrator-authorized
+    ProjectID  domain.ProjectID
+    SessionID  domain.SessionID
+    Branch     string
+    RootAccess string // "read" for normal workers, "write" only when orchestrator-authorized
 }
 
 type WorkspaceInfo struct {
@@ -396,10 +399,10 @@ type WorkspaceInfo struct {
     Branch    string // default/shared branch
     SessionID domain.SessionID
     ProjectID domain.ProjectID
-    Targets   []WorkspaceTargetInfo
+    Worktrees []WorkspaceWorktreeInfo
 }
 
-type WorkspaceTargetInfo struct {
+type WorkspaceWorktreeInfo struct {
     Name string
     Path string
     Branch string
@@ -414,7 +417,7 @@ return either:
 
 For single-repo projects, the adapter keeps today's exact behavior. For
 workspace projects, it creates the composite root, links root context entries,
-then creates one child worktree per selected target.
+then creates one child worktree for every registered workspace repo.
 
 ## Registration behavior
 
@@ -423,8 +426,7 @@ then creates one child worktree per selected target.
   a typed error that includes detected child repos. The UI can use that to show
   the interactive "register whole folder or pick one" prompt.
 - `ao project add --path <plain-folder> --as-workspace` registers a workspace
-  project with every detected child git repo unless explicit target-selection
-  flags are added later.
+  project with every detected child git repo.
 - A folder with no child git repos remains invalid and should suggest `git init`.
 - Non-git child folders are skipped by the first CLI implementation. Offering
   to `git init` them is a UI flow or a later explicit CLI flag; the daemon should
@@ -432,36 +434,35 @@ then creates one child worktree per selected target.
 
 ## Spawn behavior
 
-- Add `--targets cli,api` to the spawn API/CLI.
-- For single-repo projects, `--targets` is invalid.
-- For workspace projects, targets must name registered workspace repos.
-- If targets are omitted, choose a product policy explicitly. The safest first
-  cut is to require `--targets` for workspace projects so AO never accidentally
-  provisions every repo in a large workspace.
+- Do not add `--targets`. Workspace sessions always provision all registered
+  workspace repos.
+- For single-repo projects, spawn behavior remains unchanged.
+- For workspace projects, AO loads the registered workspace repo list and creates
+  one child worktree for each repo.
 - Normal worker sessions get `root_access=read`: they can read root context
   links but must not edit root files.
 - Add an orchestrator-only way to request `root_access=write` for the
   orchestrator itself or for one explicit worker. The request must acquire the
   project root-write lock before launch.
-- Use one shared branch name by default: `ao/<session-id>` in every selected
-  target. Store per-target rows anyway.
+- Use one shared branch name by default: `ao/<session-id>` in every child repo.
+  Store per-child worktree rows anyway.
 
 ## Cleanup and restore
 
-Create/restore/destroy must be all-target aware:
+Create/restore/destroy must be all-child-repo aware:
 
 - `Create`: create composite root, link root context, then create each child
-  worktree. If target N fails, remove already-created child worktrees and leave
+  worktree. If child N fails, remove already-created child worktrees and leave
   no registered half-session when possible.
-- `Restore`: verify every target worktree still exists and is registered. If one
+- `Restore`: verify every child worktree still exists and is registered. If one
   is missing but its directory is empty, recreate it. If a path exists and is not
   the registered worktree, refuse restore.
-- `Destroy`: call `git worktree remove` for every target without `--force`, prune
-  each child repo, release any root-write lock, and only remove the composite
+- `Destroy`: call `git worktree remove` for every child repo without `--force`,
+  prune each child repo, release any root-write lock, and only remove the composite
   root when every child removal succeeds and root context policy checks pass.
-- `Cleanup`: if one target refuses removal, preserve the composite root and
-  report/skip the session for retry. Do not delete root files or sibling targets
-  just because some targets cleaned up successfully.
+- `Cleanup`: if one child repo refuses removal, preserve the composite root and
+  report/skip the session for retry. Do not delete root files or sibling
+  worktrees just because some child worktrees cleaned up successfully.
 
 ## Implementation slices
 
@@ -471,10 +472,10 @@ Create/restore/destroy must be all-target aware:
    - Add `--as-workspace` to CLI/API input.
    - Return workspace repo names in project get/list details.
 
-2. **Session target schema**
-   - Add `session_targets` and store methods.
-   - Extend service/HTTP/CLI spawn DTOs with `targets`.
-   - Validate target names before creating a workspace.
+2. **Session worktree schema**
+   - Add `session_worktrees` and store methods.
+   - Record one row for every child repo materialized into the session.
+   - Use those rows for restore, cleanup, and per-repo SCM enumeration.
 
 3. **Composite workspace adapter**
    - Extend `gitworktree.Workspace` to branch on project kind.
@@ -499,12 +500,11 @@ Create/restore/destroy must be all-target aware:
 
 Before coding past slice 1, confirm these remaining product decisions:
 
-1. Workspace spawn without `--targets`: reject, or default to all repos?
-2. Root-write authorization UX: which exact command/agent path lets the
+1. Root-write authorization UX: which exact command/agent path lets the
    orchestrator grant `root_access=write` to itself or one explicit worker?
-3. Branch naming: one shared `ao/<session-id>` branch in every target for V1?
+2. Branch naming: one shared `ao/<session-id>` branch in every child repo for V1?
 
-The provisioning decision is settled: implement composed child worktrees. The
-root-file decision is also directional: normal sessions get read-only root
-context links; root edits require an explicit orchestrator-authorized root-write
-session.
+The provisioning decision is settled: implement composed child worktrees for
+every registered child repo. The root-file decision is also settled: normal
+sessions get read-only root symlinks; root edits require an explicit
+orchestrator-authorized root-write session.
