@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from "electron";
+import { autoUpdater } from "electron-updater";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 
@@ -158,8 +159,23 @@ ipcMain.handle("app:chooseDirectory", async () => {
   return result.filePaths[0] ?? null;
 });
 
+// Auto-update only runs for packaged builds reading a published feed (see
+// package.json build.publish). In dev there is no feed and electron-updater
+// throws, so it is skipped. A live updater additionally requires a signed +
+// notarized build — see frontend/docs/desktop-release.md.
+function initAutoUpdates(): void {
+  if (!app.isPackaged) return;
+
+  autoUpdater.on("error", (error) => console.error("auto-update: error", error));
+  autoUpdater.on("update-available", (info) => console.log("auto-update: available", info.version));
+  autoUpdater.on("update-downloaded", (info) => console.log("auto-update: downloaded", info.version));
+
+  autoUpdater.checkForUpdatesAndNotify().catch((error) => console.error("auto-update: check failed", error));
+}
+
 app.whenReady().then(() => {
   createWindow();
+  initAutoUpdates();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
