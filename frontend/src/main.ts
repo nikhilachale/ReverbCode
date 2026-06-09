@@ -1,7 +1,8 @@
-import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell, type OpenDialogOptions } from "electron";
 import { autoUpdater } from "electron-updater";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 type DaemonStatus = {
   state: "starting" | "ready" | "stopped" | "error";
@@ -15,12 +16,53 @@ let daemonStatus: DaemonStatus = { state: "stopped" };
 
 const isDev = !app.isPackaged;
 
+const RENDERER_SCHEME = "app";
+const RENDERER_HOST = "renderer";
+const RENDERER_ORIGIN = `${RENDERER_SCHEME}://${RENDERER_HOST}`;
+
+// The packaged renderer is served from a custom standard scheme, not file://.
+// A file:// page has the opaque "null" origin, which the daemon must never
+// trust (every sandboxed iframe on any website also presents "null"), so its
+// fetch/EventSource calls to the loopback API would be CORS-blocked.
+// app://renderer is an origin only this app can present, so the daemon's CORS
+// allowlist can name it. A standard scheme also makes the build's absolute
+// asset URLs (/assets/…) and history-API routing resolve, which file:// breaks.
+// Must run before app ready.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: RENDERER_SCHEME,
+    privileges: { standard: true, secure: true, supportFetchAPI: true },
+  },
+]);
+
+// Maps app://renderer/<path> to the built renderer in dist/. Paths without a
+// file extension are client-side routes and fall back to index.html (SPA).
+function registerRendererProtocol(): void {
+  const distRoot = path.join(__dirname, "../dist");
+  protocol.handle(RENDERER_SCHEME, async (request) => {
+    const url = new URL(request.url);
+    if (url.host !== RENDERER_HOST) {
+      return new Response("Not found", { status: 404 });
+    }
+    const resolved = path.resolve(path.join(distRoot, decodeURIComponent(url.pathname)));
+    if (resolved !== distRoot && !resolved.startsWith(distRoot + path.sep)) {
+      return new Response("Forbidden", { status: 403 });
+    }
+    const target = path.extname(resolved) === "" ? path.join(distRoot, "index.html") : resolved;
+    try {
+      return await net.fetch(pathToFileURL(target).toString());
+    } catch {
+      return new Response("Not found", { status: 404 });
+    }
+  });
+}
+
 function rendererUrl(): string {
   if (process.env.VITE_DEV_SERVER_URL) {
     return process.env.VITE_DEV_SERVER_URL;
   }
 
-  return `file://${path.join(__dirname, "../dist/index.html")}`;
+  return `${RENDERER_ORIGIN}/index.html`;
 }
 
 function preloadPath(): string {
@@ -200,6 +242,7 @@ function initAutoUpdates(): void {
 }
 
 app.whenReady().then(() => {
+  registerRendererProtocol();
   createWindow();
   initAutoUpdates();
 
