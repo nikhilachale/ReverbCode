@@ -45,9 +45,11 @@ export function useWorkspaceQuery() {
     queryFn: async () => {
       try {
         const workspaces = await fetchWorkspaces();
-        return workspaces.length > 0 ? workspaces : mockWorkspaces;
-      } catch {
-        return mockWorkspaces;
+        if (workspaces.length > 0) return workspaces;
+        return import.meta.env.DEV ? mockWorkspaces : workspaces;
+      } catch (error) {
+        if (import.meta.env.DEV) return mockWorkspaces;
+        throw error;
       }
     },
   });
