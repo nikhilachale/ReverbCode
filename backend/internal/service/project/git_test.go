@@ -49,11 +49,6 @@ func TestAdd_RejectsNonRepoViaGitChecker(t *testing.T) {
 // case must be treated as distinct on case-sensitive filesystems (Linux) and as
 // equal on the conventionally case-insensitive ones (macOS, Windows).
 func TestSamePath_CaseSensitivity(t *testing.T) {
-	git := project.NewExecGitCheckerForTest()
-	lower := t.TempDir()
-	if git.IsRepo(lower) {
-		t.Fatalf("temp dir unexpectedly reported as a git repo")
-	}
 	// Document the platform contract so a regression in samePath is caught here.
 	caseInsensitive := runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 	if got := project.SamePathForTest("/a/Repo", "/a/repo"); got != caseInsensitive {

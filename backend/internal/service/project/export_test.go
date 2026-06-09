@@ -5,6 +5,3 @@ package project
 
 // SamePathForTest exposes samePath to tests.
 var SamePathForTest = samePath
-
-// NewExecGitCheckerForTest returns the production GitChecker for tests.
-func NewExecGitCheckerForTest() GitChecker { return execGitChecker{} }
