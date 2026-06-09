@@ -7,9 +7,13 @@
     "sqlc": "cd backend && go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate",
     "api:spec": "cd backend && go generate ./internal/httpd/apispec/...",
     "api:ts": "openapi-typescript backend/internal/httpd/apispec/openapi.yaml -o frontend/src/api/schema.ts",
-    "api": "npm run api:spec && npm run api:ts"
+    "api": "npm run api:spec && npm run api:ts",
+    "prepare": "husky"
   },
   "devDependencies": {
-    "openapi-typescript": "7.4.4"
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.7",
+    "openapi-typescript": "7.4.4",
+    "prettier": "^3.8.4"
   }
 }
