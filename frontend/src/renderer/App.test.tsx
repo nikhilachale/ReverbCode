@@ -10,6 +10,7 @@ const { postMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("./lib/api-client", () => ({
+  apiBaseUrl: "http://127.0.0.1:4317",
   apiClient: {
     GET: vi.fn(async () => ({ error: new Error("offline") })),
     POST: postMock,
