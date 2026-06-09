@@ -20,6 +20,8 @@ import { FormEvent, MouseEvent, useState } from "react";
 import type { AgentProvider, WorkspaceSummary } from "../types/workspace";
 import { useUiStore } from "../stores/ui-store";
 import { aoBridge } from "../lib/bridge";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { cn } from "../lib/utils";
 
@@ -328,27 +330,29 @@ function CreateTaskComposer({
               </select>
 
               <label className="sr-only" htmlFor="task-branch">Branch</label>
-              <select
-                className="h-9 min-w-0 flex-1 rounded-xl border border-border bg-background px-3 font-mono text-sm text-foreground outline-none focus:border-ring sm:max-w-52"
+              <Input
+                className="h-9 min-w-0 flex-1 rounded-xl font-mono sm:max-w-52"
                 id="task-branch"
+                list="task-branch-options"
                 onChange={(event) => setBranch(event.target.value)}
+                placeholder="Default branch"
                 value={branch}
-              >
-                {branchOptions.map((option) => (
-                  <option key={option || "default"} value={option}>
-                    {option || "Default branch"}
-                  </option>
+              />
+              <datalist id="task-branch-options">
+                {branchOptions.filter(Boolean).map((option) => (
+                  <option key={option} value={option} />
                 ))}
-              </select>
+              </datalist>
 
-              <button
+              <Button
                 aria-label="Start task"
-                className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground transition-colors hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-45"
+                className="h-10 w-10 shrink-0 rounded-full hover:opacity-85 disabled:opacity-45"
                 disabled={isSubmitting || prompt.trim().length === 0}
+                size="icon"
                 type="submit"
               >
                 <ArrowUp className="h-5 w-5" aria-hidden="true" />
-              </button>
+              </Button>
             </div>
             {error && <p className="text-xs text-red-600 dark:text-red-300">{error}</p>}
           </form>
