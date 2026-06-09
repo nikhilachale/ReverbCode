@@ -14,6 +14,7 @@ const (
 // ProjectKind describes how a registered project materialises session workspaces.
 type ProjectKind string
 
+// WithDefault returns ProjectKindSingleRepo when the stored value predates the kind column.
 func (k ProjectKind) WithDefault() ProjectKind {
 	if k == "" {
 		return ProjectKindSingleRepo

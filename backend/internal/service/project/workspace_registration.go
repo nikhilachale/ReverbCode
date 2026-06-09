@@ -197,7 +197,7 @@ func ensureWorkspaceGitignore(parent string, repos []domain.WorkspaceRepoRecord)
 	if content != "" && !strings.HasSuffix(content, "\n") {
 		content += "\n"
 	}
-	return true, os.WriteFile(path, []byte(content), 0o644)
+	return true, os.WriteFile(path, []byte(content), 0o600)
 }
 
 func guardNoGitlinks(ctx context.Context, repo string) error {
