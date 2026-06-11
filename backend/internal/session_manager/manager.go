@@ -509,6 +509,11 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 			_ = m.runtime.Destroy(ctx, h) // best effort; usually already gone
 		}
 		if err := m.workspace.Destroy(ctx, ws); err != nil {
+			if !errors.Is(err, ports.ErrWorkspaceDirty) {
+				// The public reason stays a fixed string (the raw error carries
+				// internal filesystem paths); the full cause lands here.
+				m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
+			}
 			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: cleanupSkipReason(err)})
 			continue
 		}
@@ -518,12 +523,14 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 }
 
 // cleanupSkipReason renders a workspace teardown refusal as a short
-// user-facing reason for the cleanup report.
+// user-facing reason for the cleanup report. Deliberately not the raw error:
+// it flows to the API response and CLI output, and teardown errors embed
+// internal filesystem paths.
 func cleanupSkipReason(err error) string {
 	if errors.Is(err, ports.ErrWorkspaceDirty) {
 		return "workspace has uncommitted changes"
 	}
-	return fmt.Sprintf("workspace teardown failed: %v", err)
+	return "workspace teardown failed"
 }
 
 func (m *Manager) cleanupRecords(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error) {

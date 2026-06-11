@@ -467,14 +467,19 @@ func TestCleanup_ReportsSkippedWorkspaces(t *testing.T) {
 		t.Fatalf("reason = %q", res.Skipped[0].Reason)
 	}
 
-	// A non-dirty teardown failure is reported too, with the cause.
+	// A non-dirty teardown failure is reported too — but with a fixed public
+	// reason: the raw cause carries internal filesystem paths and belongs in
+	// the server log, not the API response.
 	ws.destroyErr = errors.New("disk on fire")
 	res, err = m.Cleanup(ctx, "mer")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Skipped) != 1 || !strings.Contains(res.Skipped[0].Reason, "workspace teardown failed") || !strings.Contains(res.Skipped[0].Reason, "disk on fire") {
-		t.Fatalf("skipped = %v, want teardown-failed reason with cause", res.Skipped)
+	if len(res.Skipped) != 1 || res.Skipped[0].Reason != "workspace teardown failed" {
+		t.Fatalf("skipped = %v, want fixed teardown-failed reason", res.Skipped)
+	}
+	if strings.Contains(res.Skipped[0].Reason, "disk on fire") {
+		t.Fatalf("raw internal error leaked into public reason: %q", res.Skipped[0].Reason)
 	}
 }
 
