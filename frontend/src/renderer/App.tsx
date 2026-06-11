@@ -8,6 +8,7 @@ import { Topbar } from "./components/Topbar";
 import { useDaemonStatus } from "./hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey } from "./hooks/useWorkspaceQuery";
 import { apiClient } from "./lib/api-client";
+import { apiErrorMessage } from "./lib/api-errors";
 import { Theme, useUiStore } from "./stores/ui-store";
 import { toAgentProvider, toSessionStatus, type AgentProvider, type WorkspaceSummary } from "./types/workspace";
 
@@ -22,25 +23,6 @@ function systemTheme(): Theme {
 
 function errorMessage(error: unknown) {
 	return error instanceof Error ? error.message : "Could not load projects";
-}
-
-/**
- * openapi-fetch resolves non-2xx responses to a plain APIError envelope
- * ({ code, error, message, ... }), not an Error — String() on it renders
- * "[object Object]".
- */
-function apiErrorMessage(error: unknown, fallback: string): string {
-	if (error instanceof Error) return error.message;
-	if (typeof error === "string" && error) return error;
-	if (error && typeof error === "object") {
-		const envelope = error as { message?: unknown; code?: unknown };
-		if (typeof envelope.message === "string" && envelope.message) {
-			return typeof envelope.code === "string" && envelope.code
-				? `${envelope.message} (${envelope.code})`
-				: envelope.message;
-		}
-	}
-	return fallback;
 }
 
 export function App({ routeSessionId, routeWorkspaceId }: AppProps) {
@@ -196,6 +178,52 @@ export function App({ routeSessionId, routeWorkspaceId }: AppProps) {
 		selectSession(session.id, input.projectId);
 	};
 
+	const refetchWorkspaces = () => queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+
+	const killSession = async (sessionId: string) => {
+		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/kill", {
+			params: { path: { sessionId } },
+		});
+		if (error) throw new Error(apiErrorMessage(error, "Could not kill worker"));
+		await refetchWorkspaces();
+	};
+
+	const restoreSession = async (sessionId: string) => {
+		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/restore", {
+			params: { path: { sessionId } },
+		});
+		if (error) throw new Error(apiErrorMessage(error, "Could not restore worker"));
+		await refetchWorkspaces();
+	};
+
+	const cleanupProject = async (projectId: string) => {
+		const { error } = await apiClient.POST("/api/v1/sessions/cleanup", {
+			params: { query: { project: projectId } },
+		});
+		if (error) throw new Error(apiErrorMessage(error, "Could not clean up sessions"));
+		await refetchWorkspaces();
+	};
+
+	const removeProject = async (projectId: string) => {
+		const { error } = await apiClient.DELETE("/api/v1/projects/{id}", {
+			params: { path: { id: projectId } },
+		});
+		if (error) throw new Error(apiErrorMessage(error, "Could not remove project"));
+		if (selectedWorkspaceId === projectId) selectWorkspace("");
+		await refetchWorkspaces();
+	};
+
+	// The orchestrator view fronts the selected project's orchestrator session;
+	// spawning one is idempotent on the daemon side (one active per project).
+	const startOrchestrator = async () => {
+		if (!selectedWorkspace) return;
+		const { error } = await apiClient.POST("/api/v1/orchestrators", {
+			body: { projectId: selectedWorkspace.id },
+		});
+		if (error) throw new Error(apiErrorMessage(error, "Could not start orchestrator"));
+		await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+	};
+
 	const showSideRail = !(view === "session" && workbenchTab === "terminal");
 
 	return (
@@ -213,16 +241,22 @@ export function App({ routeSessionId, routeWorkspaceId }: AppProps) {
 				<div className="flex min-h-0 flex-1">
 					<Sidebar
 						daemonStatus={daemonStatus}
+						onCleanupProject={cleanupProject}
 						onCreateProject={createProject}
+						onKillSession={killSession}
 						onNewWorker={openSpawn}
+						onRemoveProject={removeProject}
+						onRestoreSession={restoreSession}
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
 						workspaces={workspaces}
 					/>
 					<CenterPane
 						daemonReady={daemonStatus.state === "ready"}
-						session={selectedSession}
+						onStartOrchestrator={startOrchestrator}
+						session={view === "orchestrator" ? selectedWorkspace?.orchestrator : selectedSession}
 						theme={theme}
 						view={view}
+						workspace={selectedWorkspace}
 					/>
 					{showSideRail && (
 						<SideRail onSelectSession={selectSession} session={selectedSession} view={view} workspaces={workspaces} />

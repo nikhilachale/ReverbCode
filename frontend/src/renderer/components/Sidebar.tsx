@@ -1,9 +1,10 @@
-import { ChevronsUpDown, Folder, Plus, Search, Settings, Waypoints } from "lucide-react";
+import { ChevronsUpDown, CircleStop, Eraser, Folder, Plus, RotateCcw, Search, Settings, Trash2, Waypoints } from "lucide-react";
 import { useState } from "react";
-import { sessionIsActive, sessionNeedsAttention, type WorkspaceSummary } from "../types/workspace";
+import { sessionIsActive, sessionNeedsAttention, type WorkspaceSession, type WorkspaceSummary } from "../types/workspace";
 import { useUiStore } from "../stores/ui-store";
 import { aoBridge } from "../lib/bridge";
 import { useEventsConnection } from "../hooks/useEventsConnection";
+import { ContextMenu, useContextMenu, type ContextMenuItem } from "./ui/context-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { cn } from "../lib/utils";
 
@@ -13,6 +14,10 @@ type SidebarProps = {
 	workspaces: WorkspaceSummary[];
 	onCreateProject: (input: { path: string }) => Promise<void>;
 	onNewWorker: (projectId: string) => void;
+	onKillSession: (sessionId: string) => Promise<void>;
+	onRestoreSession: (sessionId: string) => Promise<void>;
+	onCleanupProject: (projectId: string) => Promise<void>;
+	onRemoveProject: (projectId: string) => Promise<void>;
 };
 
 function fleetSummary(workspaces: WorkspaceSummary[]) {
@@ -22,7 +27,17 @@ function fleetSummary(workspaces: WorkspaceSummary[]) {
 	return { agents, needYou };
 }
 
-export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProject, onNewWorker }: SidebarProps) {
+export function Sidebar({
+	daemonStatus,
+	workspaceError,
+	workspaces,
+	onCreateProject,
+	onNewWorker,
+	onKillSession,
+	onRestoreSession,
+	onCleanupProject,
+	onRemoveProject,
+}: SidebarProps) {
 	const {
 		isSidebarOpen,
 		view,
@@ -34,6 +49,51 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 	} = useUiStore();
 	const { agents, needYou } = fleetSummary(workspaces);
 	const eventsConnection = useEventsConnection();
+	const { menu, openMenu, closeMenu } = useContextMenu();
+
+	const sessionMenuItems = (session: WorkspaceSession): ContextMenuItem[] =>
+		session.status === "terminated"
+			? [
+					{
+						id: "restore",
+						label: "Restore worker",
+						icon: <RotateCcw aria-hidden="true" />,
+						onSelect: () => onRestoreSession(session.id),
+					},
+				]
+			: [
+					{
+						id: "kill",
+						label: "Kill worker",
+						confirmLabel: "Confirm kill",
+						tone: "danger",
+						icon: <CircleStop aria-hidden="true" />,
+						onSelect: () => onKillSession(session.id),
+					},
+				];
+
+	const workspaceMenuItems = (workspace: WorkspaceSummary): ContextMenuItem[] => [
+		{
+			id: "new-worker",
+			label: "New worker",
+			icon: <Plus aria-hidden="true" />,
+			onSelect: () => onNewWorker(workspace.id),
+		},
+		{
+			id: "cleanup",
+			label: "Clean up finished workers",
+			icon: <Eraser aria-hidden="true" />,
+			onSelect: () => onCleanupProject(workspace.id),
+		},
+		{
+			id: "remove",
+			label: "Remove project",
+			confirmLabel: "Confirm remove",
+			tone: "danger",
+			icon: <Trash2 aria-hidden="true" />,
+			onSelect: () => onRemoveProject(workspace.id),
+		},
+	];
 
 	if (!isSidebarOpen) {
 		return (
@@ -92,6 +152,7 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 									aria-label={`Select ${workspace.name}`}
 									className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-left"
 									onClick={() => selectWorkspace(workspace.id)}
+									onContextMenu={(event) => openMenu(event, workspaceMenuItems(workspace))}
 									type="button"
 								>
 									<Folder className="h-3.5 w-3.5 shrink-0 text-passive" aria-hidden="true" />
@@ -117,6 +178,7 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 										)}
 										key={session.id}
 										onClick={() => selectSession(session.id, workspace.id)}
+										onContextMenu={(event) => openMenu(event, sessionMenuItems(session))}
 										type="button"
 									>
 										<span className="min-w-0 flex-1 truncate text-[13.5px]">{session.title}</span>
@@ -136,6 +198,8 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 					shortcut="⌘,"
 				/>
 			</div>
+
+			{menu && <ContextMenu menu={menu} onClose={closeMenu} />}
 
 			<div className="flex items-center gap-2.5 border-t border-border px-2.5 py-2">
 				<span className="grid h-[22px] w-[22px] shrink-0 place-items-center rounded-md bg-accent text-[11px] font-semibold text-accent-foreground">

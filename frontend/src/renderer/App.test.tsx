@@ -137,7 +137,8 @@ test("adds a project from the rail", async () => {
 
 	expect(bridge.app.chooseDirectory).toHaveBeenCalled();
 	expect(postMock).toHaveBeenCalledWith("/api/v1/projects", { body: { path: "/Users/me/new-project" } });
-	expect(await screen.findByText("New Project")).toBeInTheDocument();
+	// Scope to the sidebar row: the orchestrator empty-state copy also names the project.
+	expect(await screen.findByRole("button", { name: "Select New Project" })).toBeInTheDocument();
 });
 
 test("spawns a worker from the New worker modal", async () => {

@@ -1,5 +1,7 @@
-import { GitBranch, GitCommitHorizontal, GitPullRequest, LoaderCircle, Plus, Square, Trash2 } from "lucide-react";
+import { GitBranch, GitCommitHorizontal, GitPullRequest, LoaderCircle, Plus, Square, SquareCheck, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { WorkbenchView } from "../stores/ui-store";
+import { useSessionGit } from "../hooks/useSessionGit";
 import {
 	type WorkerDisplayStatus,
 	type WorkspaceSession,
@@ -9,6 +11,7 @@ import {
 	workerStatusPulses,
 } from "../types/workspace";
 import { Button } from "./ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { cn } from "../lib/utils";
 
 // Session status is a single glyph, no text: spinner while working, a PR icon
@@ -115,25 +118,62 @@ function WorkersList({
 }
 
 function GitRail({ session }: { session?: WorkspaceSession }) {
-	const files = session?.changedFiles ?? [];
+	const git = useSessionGit(session?.id);
+	const [message, setMessage] = useState("");
+	const [description, setDescription] = useState("");
+	const [discardArmed, setDiscardArmed] = useState(false);
+
+	// Armed confirm decays on its own instead of on mouse-leave: a pixel of
+	// cursor wobble silently disarming makes the second click re-arm forever.
+	useEffect(() => {
+		if (!discardArmed) return;
+		const timer = setTimeout(() => setDiscardArmed(false), 3_000);
+		return () => clearTimeout(timer);
+	}, [discardArmed]);
+
+	const files = git.status?.files ?? [];
+	const branch = git.status?.branch || session?.branch || "—";
+
+	const discard = async () => {
+		// Destructive: first click arms, second click runs (mirrors the
+		// context-menu confirm pattern).
+		if (!discardArmed) {
+			setDiscardArmed(true);
+			return;
+		}
+		setDiscardArmed(false);
+		await git.discardAll();
+	};
+
+	const commit = async () => {
+		if (await git.commitAndPush(message, description)) {
+			setMessage("");
+			setDescription("");
+		}
+	};
 
 	return (
 		<>
 			<SideHead title="Changed" count={files.length} />
 
 			<div className="flex items-center gap-3 border-b border-border px-3 py-2 text-[12px]">
-				<button className="text-muted-foreground transition-colors hover:text-foreground" type="button">
-					All files
-				</button>
 				<button
-					className="inline-flex items-center gap-1.5 text-error transition-colors hover:opacity-80"
+					className={cn(
+						"inline-flex items-center gap-1.5 text-error transition-colors hover:opacity-80",
+						(files.length === 0 || git.isMutating) && "pointer-events-none opacity-40",
+					)}
+					onClick={() => void discard()}
 					type="button"
 				>
 					<Trash2 className="h-3 w-3" aria-hidden="true" />
-					Discard all
+					{discardArmed ? "Confirm discard" : "Discard all"}
 				</button>
 				<button
-					className="ml-auto inline-flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground"
+					className={cn(
+						"ml-auto inline-flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground",
+						(files.length === 0 || git.isMutating) && "pointer-events-none opacity-40",
+					)}
+					onClick={() => void git.stageAll()}
 					type="button"
 				>
 					<Plus className="h-3 w-3" aria-hidden="true" />
@@ -142,55 +182,83 @@ function GitRail({ session }: { session?: WorkspaceSession }) {
 			</div>
 
 			<div className="min-h-0 flex-1 overflow-y-auto p-2">
-				{files.length === 0 ? (
-					<p className="px-2 py-6 text-center text-[12px] text-passive">No changes yet.</p>
+				{git.statusError ? (
+					<p className="px-2 py-6 text-center text-[12px] text-passive">{git.statusError}</p>
+				) : files.length === 0 ? (
+					<p className="px-2 py-6 text-center text-[12px] text-passive">
+						{git.isLoading ? "Loading changes…" : "No changes yet."}
+					</p>
 				) : (
-					files.map((file) => (
-						<div
-							className="flex h-7 items-center gap-2 rounded-md px-2 font-mono text-[12px] text-muted-foreground transition-colors hover:bg-surface"
-							key={file.path}
-						>
-							<span className="min-w-0 flex-1 truncate text-foreground">{file.path}</span>
-							<span className="shrink-0 text-success">+{file.additions}</span>
-							<span className="shrink-0 text-error">−{file.deletions}</span>
-							<Square
-								className={cn("h-[13px] w-[13px] shrink-0", file.staged ? "text-accent" : "text-passive")}
-								aria-hidden="true"
-							/>
-						</div>
-					))
+					files.map((file) => {
+						const StagedGlyph = file.staged ? SquareCheck : Square;
+						return (
+							<div
+								className="flex h-7 items-center gap-2 rounded-md px-2 font-mono text-[12px] text-muted-foreground transition-colors hover:bg-surface"
+								key={file.path}
+							>
+								<span className="min-w-0 flex-1 truncate text-foreground">{file.path}</span>
+								<span className="shrink-0 text-success">+{file.additions}</span>
+								<span className="shrink-0 text-error">−{file.deletions}</span>
+								<StagedGlyph
+									className={cn("h-[13px] w-[13px] shrink-0", file.staged ? "text-accent" : "text-passive")}
+									aria-hidden="true"
+								/>
+							</div>
+						);
+					})
 				)}
 			</div>
 
 			<div className="flex flex-col gap-2 border-t border-border p-3">
 				<input
 					className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-[12.5px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-					defaultValue={session?.commitMessage ?? ""}
-					key={session?.id}
+					onChange={(event) => setMessage(event.target.value)}
 					placeholder="Commit message"
+					value={message}
 				/>
 				<textarea
 					className="w-full resize-none rounded-md border border-border bg-transparent px-2.5 py-1.5 text-[12.5px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+					onChange={(event) => setDescription(event.target.value)}
 					placeholder="Description"
 					rows={2}
+					value={description}
 				/>
-				<Button className="w-full" disabled={files.length === 0} variant="primary">
-					<GitCommitHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
+				<Button
+					className="w-full"
+					disabled={files.length === 0 || message.trim() === "" || git.isMutating}
+					onClick={() => void commit()}
+					variant="primary"
+				>
+					{git.isMutating ? (
+						<LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+					) : (
+						<GitCommitHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
+					)}
 					Commit &amp; Push
 				</Button>
+				{git.actionError && (
+					<p className="text-[11.5px] leading-snug text-error" role="alert">
+						{git.actionError}
+					</p>
+				)}
 			</div>
 
 			<div className="flex items-center gap-2.5 border-t border-border px-3 py-2 font-mono text-[11px] text-passive">
 				<GitBranch className="h-3 w-3 shrink-0" aria-hidden="true" />
-				<span className="min-w-0 truncate text-muted-foreground">{session?.branch || "—"}</span>
-				<button
-					className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-0.5 text-muted-foreground transition-colors hover:bg-surface"
-					type="button"
-				>
-					<Plus className="h-3 w-3" aria-hidden="true" />
-					<GitPullRequest className="h-3 w-3" aria-hidden="true" />
-					Create PR
-				</button>
+				<span className="min-w-0 truncate text-muted-foreground">{branch}</span>
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<button
+							className="ml-auto inline-flex shrink-0 cursor-default items-center gap-1 rounded-md border border-border px-2 py-0.5 text-muted-foreground opacity-50"
+							type="button"
+						>
+							<Plus className="h-3 w-3" aria-hidden="true" />
+							<GitPullRequest className="h-3 w-3" aria-hidden="true" />
+							Create PR
+						</button>
+					</TooltipTrigger>
+					<TooltipContent>Soon — the daemon's PR lane is still stubbed</TooltipContent>
+				</Tooltip>
 			</div>
 		</>
 	);
