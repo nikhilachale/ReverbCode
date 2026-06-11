@@ -34,7 +34,10 @@ const (
 	// legacy-file cleanup and uninstall recognize AO entries by prefix
 	// without an embedded template to diff against.
 	codexHookCommandPrefix = "ao hooks codex "
-	codexHookTimeout       = 30
+	// codexHookTimeout caps how long Codex waits on one AO hook callback. The
+	// callback is a loopback POST that normally returns in milliseconds; a
+	// tight cap keeps a hung daemon from stalling the agent's turn.
+	codexHookTimeout = 5
 )
 
 // codexHookFile is the on-disk shape of .codex/hooks.json. It is used by tests

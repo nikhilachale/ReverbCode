@@ -301,7 +301,16 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
 	}
 	if !ok {
-		return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, nil), TerminalHandleID: rec.Metadata.RuntimeHandleID}, nil
+		return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, nil, s.now()), TerminalHandleID: rec.Metadata.RuntimeHandleID}, nil
 	}
-	return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, &pr), TerminalHandleID: rec.Metadata.RuntimeHandleID}, nil
+	return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, &pr, s.now()), TerminalHandleID: rec.Metadata.RuntimeHandleID}, nil
+}
+
+// now tolerates a zero-value Service (tests construct the struct literally
+// without going through New, which is where clock gets its default).
+func (s *Service) now() time.Time {
+	if s.clock == nil {
+		return time.Now()
+	}
+	return s.clock()
 }

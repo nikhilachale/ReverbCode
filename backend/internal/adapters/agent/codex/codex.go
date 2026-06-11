@@ -229,6 +229,27 @@ func (p *Plugin) codexBinary(ctx context.Context) (string, error) {
 	return binary, nil
 }
 
+// DoctorLaunchProbes returns argv tails `ao doctor` runs against the installed
+// codex binary to smoke-test the launch surface AO's hook delivery depends on.
+// Probe 1 confirms --dangerously-bypass-hook-trust still exists (clap rejects
+// unknown flags with a non-zero exit even alongside --version). Probe 2 loads
+// codex's config with AO's `-c` session-flag overrides through the offline
+// `features list` subcommand, so an override-parse regression surfaces as a
+// non-zero exit or warning output. Both are built from the same flag builders
+// the launch command uses, so the probes cannot drift from the real spawn argv.
+func DoctorLaunchProbes() [][]string {
+	flagProbe := make([]string, 0, 2)
+	appendHookTrustBypassFlag(&flagProbe)
+	flagProbe = append(flagProbe, "--version")
+
+	overrideProbe := []string{"features", "list"}
+	appendNoUpdateCheckFlag(&overrideProbe)
+	appendHideRateLimitNudgeFlag(&overrideProbe)
+	appendSessionHookFlags(&overrideProbe)
+	appendWorkspaceTrustFlag(&overrideProbe, os.TempDir())
+	return [][]string{flagProbe, overrideProbe}
+}
+
 func appendNoUpdateCheckFlag(cmd *[]string) {
 	*cmd = append(*cmd, "-c", "check_for_update_on_startup=false")
 }

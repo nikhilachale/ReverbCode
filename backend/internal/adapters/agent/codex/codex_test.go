@@ -30,10 +30,10 @@ func canonicalTempDir(t *testing.T) string {
 // these values as TOML.
 func sessionHookFlags() []string {
 	return []string{
-		"-c", `hooks.SessionStart=[{hooks=[{type="command",command="ao hooks codex session-start",timeout=30}]}]`,
-		"-c", `hooks.UserPromptSubmit=[{hooks=[{type="command",command="ao hooks codex user-prompt-submit",timeout=30}]}]`,
-		"-c", `hooks.PermissionRequest=[{hooks=[{type="command",command="ao hooks codex permission-request",timeout=30}]}]`,
-		"-c", `hooks.Stop=[{hooks=[{type="command",command="ao hooks codex stop",timeout=30}]}]`,
+		"-c", `hooks.SessionStart=[{hooks=[{type="command",command="ao hooks codex session-start",timeout=5}]}]`,
+		"-c", `hooks.UserPromptSubmit=[{hooks=[{type="command",command="ao hooks codex user-prompt-submit",timeout=5}]}]`,
+		"-c", `hooks.PermissionRequest=[{hooks=[{type="command",command="ao hooks codex permission-request",timeout=5}]}]`,
+		"-c", `hooks.Stop=[{hooks=[{type="command",command="ao hooks codex stop",timeout=5}]}]`,
 	}
 }
 
@@ -548,4 +548,28 @@ func countCodexHookCommand(entries []codexMatcherGroup, command string) int {
 		}
 	}
 	return count
+}
+
+func TestDoctorLaunchProbesMirrorLaunchFlags(t *testing.T) {
+	probes := DoctorLaunchProbes()
+	if len(probes) != 2 {
+		t.Fatalf("probes = %d, want 2", len(probes))
+	}
+	if !reflect.DeepEqual(probes[0], []string{"--dangerously-bypass-hook-trust", "--version"}) {
+		t.Fatalf("flag probe = %#v", probes[0])
+	}
+	override := probes[1]
+	if len(override) < 2 || override[0] != "features" || override[1] != "list" {
+		t.Fatalf("override probe must ride `features list`, got %#v", override)
+	}
+	joined := strings.Join(override, " ")
+	for _, want := range []string{
+		"hooks.SessionStart=", "hooks.UserPromptSubmit=", "hooks.PermissionRequest=", "hooks.Stop=",
+		"notice.hide_rate_limit_model_nudge=true",
+		`projects={"`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("override probe missing %q in %s", want, joined)
+		}
+	}
 }

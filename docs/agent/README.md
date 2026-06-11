@@ -66,11 +66,14 @@ ao hooks <agent-adapter> <event>
 The callback:
 
 1. Reads the native hook JSON payload from stdin.
-2. Reads the AO session id from `AO_SESSION_ID`.
-3. Opens the AO SQLite store (`ao.db`) in the data dir — `AO_DATA_DIR`, default `<user config dir>/agent-orchestrator/data`.
-4. Merges normalized metadata into the matching session row.
-5. Publishes `session.updated` when metadata changed.
-6. Prints `{}` and exits 0 for successful no-op cases, including non-AO sessions or missing rows.
+2. Reads the AO session id from `AO_SESSION_ID` (exits 0 immediately for non-AO sessions).
+3. Derives a normalized activity state from the agent + event (`activitydispatch.Derive`); events with no activity meaning report nothing.
+4. POSTs the state to the daemon at `POST /api/v1/sessions/{id}/activity`; the daemon owns the store and fans out `session.updated` via CDC.
+5. Always exits 0 — a failed delivery must never break the user's agent. Failures are appended to `hooks.log` under `AO_DATA_DIR` and surfaced by the `hooks-log` check in `ao doctor`.
+
+The daemon also records the FIRST callback per spawn/restore (`first_signal_at`); a live session that has never signaled past a grace period derives the `no_signal` display status instead of a confident `idle`, so a broken hook pipeline is visible on the dashboard.
+
+Persisting hook-derived metadata (`agentSessionId`, `title`, `summary`) into the session row is **not implemented yet** — until it is, adapters whose restore needs the native session id (e.g. `codex resume`) fall back to a fresh launch.
 
 The spawn engine inserts the AO session row before launching the durability provider so early startup hooks can update an existing row. If launch fails after insertion, spawn deletes the row during rollback.
 
