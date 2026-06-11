@@ -1,4 +1,18 @@
-import { ChevronsUpDown, CircleStop, Eraser, Folder, Plus, RotateCcw, Search, Settings, Trash2, Waypoints } from "lucide-react";
+import {
+	Archive,
+	ArchiveRestore,
+	ChevronRight,
+	ChevronsUpDown,
+	CircleStop,
+	Eraser,
+	Folder,
+	Plus,
+	RotateCcw,
+	Search,
+	Settings,
+	Trash2,
+	Waypoints,
+} from "lucide-react";
 import { useState } from "react";
 import { sessionIsActive, sessionNeedsAttention, type WorkspaceSession, type WorkspaceSummary } from "../types/workspace";
 import { useUiStore } from "../stores/ui-store";
@@ -16,6 +30,8 @@ type SidebarProps = {
 	onNewWorker: (projectId: string) => void;
 	onKillSession: (sessionId: string) => Promise<void>;
 	onRestoreSession: (sessionId: string) => Promise<void>;
+	onArchiveSession: (sessionId: string) => Promise<void>;
+	onUnarchiveSession: (sessionId: string) => Promise<void>;
 	onCleanupProject: (projectId: string) => Promise<void>;
 	onRemoveProject: (projectId: string) => Promise<void>;
 };
@@ -35,6 +51,8 @@ export function Sidebar({
 	onNewWorker,
 	onKillSession,
 	onRestoreSession,
+	onArchiveSession,
+	onUnarchiveSession,
 	onCleanupProject,
 	onRemoveProject,
 }: SidebarProps) {
@@ -50,27 +68,46 @@ export function Sidebar({
 	const { agents, needYou } = fleetSummary(workspaces);
 	const eventsConnection = useEventsConnection();
 	const { menu, openMenu, closeMenu } = useContextMenu();
+	const [archivedOpen, setArchivedOpen] = useState<Record<string, boolean>>({});
 
-	const sessionMenuItems = (session: WorkspaceSession): ContextMenuItem[] =>
-		session.status === "terminated"
-			? [
-					{
-						id: "restore",
-						label: "Restore worker",
-						icon: <RotateCcw aria-hidden="true" />,
-						onSelect: () => onRestoreSession(session.id),
-					},
-				]
-			: [
-					{
-						id: "kill",
-						label: "Kill worker",
-						confirmLabel: "Confirm kill",
-						tone: "danger",
-						icon: <CircleStop aria-hidden="true" />,
-						onSelect: () => onKillSession(session.id),
-					},
-				];
+	const sessionMenuItems = (session: WorkspaceSession): ContextMenuItem[] => {
+		if (session.archived) {
+			return [
+				{
+					id: "unarchive",
+					label: "Unarchive worker",
+					icon: <ArchiveRestore aria-hidden="true" />,
+					onSelect: () => onUnarchiveSession(session.id),
+				},
+			];
+		}
+		if (session.status === "terminated") {
+			return [
+				{
+					id: "restore",
+					label: "Restore worker",
+					icon: <RotateCcw aria-hidden="true" />,
+					onSelect: () => onRestoreSession(session.id),
+				},
+				{
+					id: "archive",
+					label: "Archive worker",
+					icon: <Archive aria-hidden="true" />,
+					onSelect: () => onArchiveSession(session.id),
+				},
+			];
+		}
+		return [
+			{
+				id: "kill",
+				label: "Kill worker",
+				confirmLabel: "Confirm kill",
+				tone: "danger",
+				icon: <CircleStop aria-hidden="true" />,
+				onSelect: () => onKillSession(session.id),
+			},
+		];
+	};
 
 	const workspaceMenuItems = (workspace: WorkspaceSummary): ContextMenuItem[] => [
 		{
@@ -165,26 +202,49 @@ export function Sidebar({
 								/>
 							</div>
 
-							{workspace.sessions.map((session) => {
-								const active = view === "session" && selectedSessionId === session.id;
-								return (
+							{workspace.sessions.map((session) => (
+								<SessionRow
+									active={view === "session" && selectedSessionId === session.id}
+									key={session.id}
+									onContextMenu={(event) => openMenu(event, sessionMenuItems(session))}
+									onSelect={() => selectSession(session.id, workspace.id)}
+									title={session.title}
+								/>
+							))}
+
+							{(workspace.archivedSessions ?? []).length > 0 && (
+								<>
 									<button
-										aria-label={session.title}
-										className={cn(
-											"relative flex h-8 w-full items-center rounded-lg pl-[30px] pr-2 text-left transition-colors",
-											active
-												? "bg-raised text-foreground before:absolute before:left-5 before:top-2 before:bottom-2 before:w-0.5 before:rounded before:bg-accent"
-												: "text-muted-foreground hover:bg-surface",
-										)}
-										key={session.id}
-										onClick={() => selectSession(session.id, workspace.id)}
-										onContextMenu={(event) => openMenu(event, sessionMenuItems(session))}
+										aria-expanded={!!archivedOpen[workspace.id]}
+										aria-label={`Archived workers in ${workspace.name}`}
+										className="flex h-7 w-full items-center gap-1 rounded-lg pl-[26px] pr-2 text-left text-[11px] text-passive transition-colors hover:bg-surface"
+										onClick={() =>
+											setArchivedOpen((open) => ({ ...open, [workspace.id]: !open[workspace.id] }))
+										}
 										type="button"
 									>
-										<span className="min-w-0 flex-1 truncate text-[13.5px]">{session.title}</span>
+										<ChevronRight
+											aria-hidden="true"
+											className={cn(
+												"h-3 w-3 shrink-0 transition-transform",
+												archivedOpen[workspace.id] && "rotate-90",
+											)}
+										/>
+										<span>Archived ({workspace.archivedSessions?.length})</span>
 									</button>
-								);
-							})}
+									{archivedOpen[workspace.id] &&
+										(workspace.archivedSessions ?? []).map((session) => (
+											<SessionRow
+												active={view === "session" && selectedSessionId === session.id}
+												dimmed
+												key={session.id}
+												onContextMenu={(event) => openMenu(event, sessionMenuItems(session))}
+												onSelect={() => selectSession(session.id, workspace.id)}
+												title={session.title}
+											/>
+										))}
+								</>
+							)}
 						</section>
 					))
 				)}
@@ -215,6 +275,39 @@ export function Sidebar({
 				<ChevronsUpDown className="ml-auto h-3.5 w-3.5 shrink-0 text-passive" aria-hidden="true" />
 			</div>
 		</aside>
+	);
+}
+
+function SessionRow({
+	active,
+	dimmed,
+	onContextMenu,
+	onSelect,
+	title,
+}: {
+	active: boolean;
+	dimmed?: boolean;
+	onContextMenu: (event: React.MouseEvent) => void;
+	onSelect: () => void;
+	title: string;
+}) {
+	return (
+		<button
+			aria-label={title}
+			className={cn(
+				"relative flex h-8 w-full items-center rounded-lg pl-[30px] pr-2 text-left transition-colors",
+				active
+					? "bg-raised text-foreground before:absolute before:left-5 before:top-2 before:bottom-2 before:w-0.5 before:rounded before:bg-accent"
+					: dimmed
+						? "text-passive hover:bg-surface"
+						: "text-muted-foreground hover:bg-surface",
+			)}
+			onClick={onSelect}
+			onContextMenu={onContextMenu}
+			type="button"
+		>
+			<span className="min-w-0 flex-1 truncate text-[13.5px]">{title}</span>
+		</button>
 	);
 }
 

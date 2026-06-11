@@ -76,6 +76,8 @@ export type WorkspaceSession = {
 	provider: AgentProvider;
 	branch: string;
 	status: SessionStatus;
+	/** Soft-hidden from the default worker list (terminated workers only). */
+	archived?: boolean;
 	updatedAt: string;
 	/** The session's git diff against its base, when known. */
 	changedFiles?: ChangedFile[];
@@ -162,6 +164,12 @@ export type WorkspaceSummary = {
 	orchestrator?: WorkspaceSession;
 	/** Worker sessions only; the orchestrator is surfaced separately above. */
 	sessions: WorkspaceSession[];
+	/**
+	 * Archived workers, split out so every default surface (sidebar list, side
+	 * rail, counts) ignores them; the sidebar shows them behind an
+	 * "Archived (n)" disclosure.
+	 */
+	archivedSessions?: WorkspaceSession[];
 };
 
 export function toAgentProvider(provider?: string): AgentProvider {

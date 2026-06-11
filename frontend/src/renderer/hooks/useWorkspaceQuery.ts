@@ -29,18 +29,21 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 			provider: toAgentProvider(session.harness),
 			branch: session.branch ?? "",
 			status: toSessionStatus(session.status, session.isTerminated),
+			archived: session.isArchived ?? false,
 			updatedAt: new Date(session.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
 		});
 		// One active orchestrator per project (DESIGN.md); it anchors the
 		// orchestrator view instead of appearing among the workers.
 		const orchestrator = projectSessions.find((session) => session.kind === "orchestrator" && !session.isTerminated);
+		const workers = projectSessions.filter((session) => session.kind !== "orchestrator").map(toWorkspaceSession);
 
 		return {
 			id: project.id,
 			name: project.name,
 			path: project.path,
 			orchestrator: orchestrator ? toWorkspaceSession(orchestrator) : undefined,
-			sessions: projectSessions.filter((session) => session.kind !== "orchestrator").map(toWorkspaceSession),
+			sessions: workers.filter((session) => !session.archived),
+			archivedSessions: workers.filter((session) => session.archived),
 		};
 	});
 }

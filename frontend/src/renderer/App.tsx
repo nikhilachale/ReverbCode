@@ -54,7 +54,9 @@ export function App({ routeSessionId, routeWorkspaceId }: AppProps) {
 		workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? workspaces[0] ?? null;
 	const selectedSession =
 		view === "session"
-			? workspaces.flatMap((workspace) => workspace.sessions).find((session) => session.id === selectedSessionId)
+			? workspaces
+					.flatMap((workspace) => [...workspace.sessions, ...(workspace.archivedSessions ?? [])])
+					.find((session) => session.id === selectedSessionId)
 			: undefined;
 	const sessionWorkspace = selectedSession
 		? (workspaces.find((workspace) => workspace.id === selectedSession.workspaceId) ?? selectedWorkspace)
@@ -196,6 +198,22 @@ export function App({ routeSessionId, routeWorkspaceId }: AppProps) {
 		await refetchWorkspaces();
 	};
 
+	const archiveSession = async (sessionId: string) => {
+		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/archive", {
+			params: { path: { sessionId } },
+		});
+		if (error) throw new Error(apiErrorMessage(error, "Could not archive worker"));
+		await refetchWorkspaces();
+	};
+
+	const unarchiveSession = async (sessionId: string) => {
+		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/unarchive", {
+			params: { path: { sessionId } },
+		});
+		if (error) throw new Error(apiErrorMessage(error, "Could not unarchive worker"));
+		await refetchWorkspaces();
+	};
+
 	const cleanupProject = async (projectId: string) => {
 		const { error } = await apiClient.POST("/api/v1/sessions/cleanup", {
 			params: { query: { project: projectId } },
@@ -241,12 +259,14 @@ export function App({ routeSessionId, routeWorkspaceId }: AppProps) {
 				<div className="flex min-h-0 flex-1">
 					<Sidebar
 						daemonStatus={daemonStatus}
+						onArchiveSession={archiveSession}
 						onCleanupProject={cleanupProject}
 						onCreateProject={createProject}
 						onKillSession={killSession}
 						onNewWorker={openSpawn}
 						onRemoveProject={removeProject}
 						onRestoreSession={restoreSession}
+						onUnarchiveSession={unarchiveSession}
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
 						workspaces={workspaces}
 					/>

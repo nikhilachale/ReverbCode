@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
@@ -19,6 +19,7 @@ const { postMock, patchMock, mockData } = vi.hoisted(() => ({
 			harness?: string;
 			status: string;
 			isTerminated: boolean;
+			isArchived?: boolean;
 			updatedAt: string;
 		}[],
 	},
@@ -211,6 +212,76 @@ test("renames the spawned worker when a name is given", async () => {
 		body: { displayName: "fix-login" },
 	});
 	expect(await screen.findByRole("button", { name: "fix-login" })).toBeInTheDocument();
+});
+
+test("archives a terminated worker from its sidebar row menu", async () => {
+	const user = userEvent.setup();
+	mockData.projects = [{ id: "proj-1", name: "my-app", path: "/home/me/my-app", sessionPrefix: "" }];
+	mockData.sessions = [
+		{
+			id: "sess-1",
+			projectId: "proj-1",
+			displayName: "old-task",
+			status: "terminated",
+			isTerminated: true,
+			updatedAt: new Date().toISOString(),
+		},
+	];
+	postMock.mockImplementationOnce(async () => {
+		// The daemon stamps archived_at; the post-action refetch sees it.
+		mockData.sessions[0].isArchived = true;
+		return { data: { ok: true, sessionId: "sess-1" } };
+	});
+
+	renderApp();
+
+	fireEvent.contextMenu(await screen.findByRole("button", { name: "old-task" }));
+	await user.click(await screen.findByRole("menuitem", { name: "Archive worker" }));
+
+	expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/archive", {
+		params: { path: { sessionId: "sess-1" } },
+	});
+	// The row leaves the default worker list and lands behind the collapsed
+	// Archived disclosure.
+	expect(await screen.findByRole("button", { name: "Archived workers in my-app" })).toBeInTheDocument();
+	expect(screen.queryByRole("button", { name: "old-task" })).not.toBeInTheDocument();
+});
+
+test("unarchives a worker from the Archived group", async () => {
+	const user = userEvent.setup();
+	mockData.projects = [{ id: "proj-1", name: "my-app", path: "/home/me/my-app", sessionPrefix: "" }];
+	mockData.sessions = [
+		{
+			id: "sess-1",
+			projectId: "proj-1",
+			displayName: "old-task",
+			status: "terminated",
+			isTerminated: true,
+			isArchived: true,
+			updatedAt: new Date().toISOString(),
+		},
+	];
+	postMock.mockImplementationOnce(async () => {
+		mockData.sessions[0].isArchived = false;
+		return { data: { ok: true, sessionId: "sess-1" } };
+	});
+
+	renderApp();
+
+	// Archived rows stay hidden until the disclosure is expanded.
+	const disclosure = await screen.findByRole("button", { name: "Archived workers in my-app" });
+	expect(screen.queryByRole("button", { name: "old-task" })).not.toBeInTheDocument();
+	await user.click(disclosure);
+
+	fireEvent.contextMenu(await screen.findByRole("button", { name: "old-task" }));
+	await user.click(await screen.findByRole("menuitem", { name: "Unarchive worker" }));
+
+	expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/unarchive", {
+		params: { path: { sessionId: "sess-1" } },
+	});
+	// Back in the default list; the empty disclosure disappears.
+	expect(await screen.findByRole("button", { name: "old-task" })).toBeInTheDocument();
+	expect(screen.queryByRole("button", { name: "Archived workers in my-app" })).not.toBeInTheDocument();
 });
 
 test("surfaces an error when spawning fails", async () => {
