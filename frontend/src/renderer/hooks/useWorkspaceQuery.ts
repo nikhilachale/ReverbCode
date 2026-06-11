@@ -26,7 +26,12 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 				workspaceName: project.name,
 				title: session.displayName ?? session.issueId ?? session.id,
 				provider: toAgentProvider(session.harness),
-				kind: session.kind === "orchestrator" ? ("orchestrator" as const) : session.kind === "worker" ? ("worker" as const) : undefined,
+				kind:
+					session.kind === "orchestrator"
+						? ("orchestrator" as const)
+						: session.kind === "worker"
+							? ("worker" as const)
+							: undefined,
 				branch: `session/${session.id}`,
 				status: toSessionStatus(session.status, session.isTerminated),
 				archived: session.isArchived ?? false,
