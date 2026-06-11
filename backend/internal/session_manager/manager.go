@@ -315,11 +315,10 @@ func sessionPrefix(project domain.ProjectRecord) string {
 	if p := strings.TrimSpace(project.Config.SessionPrefix); p != "" {
 		return p
 	}
-	id := string(project.ID)
-	if len(id) <= 12 {
-		return id
+	if len(project.ID) <= 12 {
+		return string(project.ID)
 	}
-	return id[:12]
+	return string(project.ID[:12])
 }
 
 // markSpawnFailedTerminated best-effort parks an orphaned spawn as terminated.
