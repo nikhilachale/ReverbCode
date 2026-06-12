@@ -14,6 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
+	notificationproj "github.com/aoagents/agent-orchestrator/backend/internal/observe/notification"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
@@ -84,11 +85,16 @@ func Run() error {
 	// agent nudges (CI failure, review feedback, merge conflict).
 	messenger := newSessionMessenger(store, runtimeAdapter, log)
 	notifier := notificationsvc.New(notificationsvc.Deps{Store: store})
+	notificationDone := notificationproj.New(notificationproj.Deps{
+		Store:  store,
+		Live:   cdcPipe.Broadcaster,
+		Logger: log,
+	}).Start(ctx)
 
 	// Bring up the Lifecycle Manager and the reaper first: it makes the session
 	// lifecycle write path live (reducer write -> store -> DB trigger ->
 	// change_log -> poller -> broadcaster) and gives startSession the shared LCM.
-	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, notifier, log)
+	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, log)
 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
 
 	// Wire the controller-facing session service over the same store + LCM, the
@@ -99,6 +105,7 @@ func Run() error {
 	if err != nil {
 		stop()
 		lcStack.Stop()
+		<-notificationDone
 		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
 			log.Error("cdc pipeline shutdown", "err", cdcErr)
 		}
@@ -117,6 +124,7 @@ func Run() error {
 	if err != nil {
 		stop()
 		lcStack.Stop()
+		<-notificationDone
 		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
 			log.Error("cdc pipeline shutdown", "err", cdcErr)
 		}
@@ -131,6 +139,7 @@ func Run() error {
 	// runs before the cancel — which would hang any non-signal exit path.
 	stop()
 	lcStack.Stop()
+	<-notificationDone
 	if err := cdcPipe.Stop(); err != nil {
 		log.Error("cdc pipeline shutdown", "err", err)
 	}

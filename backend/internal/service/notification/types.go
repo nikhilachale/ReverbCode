@@ -1,15 +1,7 @@
-// Package notification enriches lifecycle notification intents, persists unread
-// rows, and dispatches created notifications to dashboard-facing publishers.
+// Package notification exposes read-only notification DTOs for REST controllers.
 package notification
 
-import (
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-)
-
-// Intent is the service boundary shape. It aliases the lifecycle contract so
-// Manager.Notify also satisfies lifecycle's NotificationSink without copying.
-type Intent = ports.NotificationIntent
+import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 
 // TargetKind describes what a dashboard should navigate to for a notification.
 type TargetKind string

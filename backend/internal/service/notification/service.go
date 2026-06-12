@@ -3,10 +3,6 @@ package notification
 import (
 	"context"
 	"errors"
-	"fmt"
-	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -18,54 +14,19 @@ const (
 	MaxListLimit = 100
 )
 
-// Manager validates lifecycle intents, enriches them into stored rows, and persists
-// unread notifications.
+// Manager reads stored notifications for REST controllers.
 type Manager struct {
 	store Store
-	clock func() time.Time
-	newID func() string
 }
 
 // Deps configures a Manager.
 type Deps struct {
 	Store Store
-	Clock func() time.Time
-	NewID func() string
 }
 
-// New constructs a Manager with production defaults for optional collaborators.
+// New constructs a read-only notification Manager.
 func New(d Deps) *Manager {
-	m := &Manager{store: d.Store, clock: d.Clock, newID: d.NewID}
-	if m.clock == nil {
-		m.clock = time.Now
-	}
-	if m.newID == nil {
-		m.newID = func() string { return "ntf_" + uuid.NewString() }
-	}
-	return m
-}
-
-// Notify stores one notification intent. Duplicate unread rows are treated as a clean no-op.
-func (m *Manager) Notify(ctx context.Context, intent Intent) error {
-	if m == nil || m.store == nil {
-		return errors.New("notification: store is required")
-	}
-	if intent.CreatedAt.IsZero() {
-		intent.CreatedAt = m.clock().UTC()
-	}
-	rec, err := enrich(intent)
-	if err != nil {
-		return fmt.Errorf("notification enrich: %w", err)
-	}
-	rec.ID = m.newID()
-	_, inserted, err := m.store.CreateNotification(ctx, rec)
-	if err != nil {
-		return fmt.Errorf("notification store: %w", err)
-	}
-	if !inserted {
-		return nil
-	}
-	return nil
+	return &Manager{store: d.Store}
 }
 
 // ListUnread returns unread notifications newest-first.
