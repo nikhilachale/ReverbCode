@@ -44,24 +44,24 @@ rather than an escape-hatch map.
 shipped setting lives as a key inside the single `projects.config` JSON blob;
 settings without a live consumer are not modeled yet (see "Sequencing").
 
-| YAML field                        | Type                   | Home                                       | Status                                         |
-| --------------------------------- | ---------------------- | ------------------------------------------ | ---------------------------------------------- |
-| `name`                            | string                 | `projects.display_name` (column)           | done                                           |
-| `repo`                            | string                 | `projects.repo_origin_url` (column)        | done                                           |
-| `path`                            | string                 | `projects.path` (column)                   | done                                           |
-| `defaultBranch`                   | string                 | `config.defaultBranch`                     | done                                           |
-| `sessionPrefix`                   | string                 | `config.sessionPrefix`                     | done                                           |
-| `agentConfig`                     | `{model, permissions}` | `config.agentConfig`                       | done                                           |
-| `orchestrator`/`worker` overrides | `{agent, agentConfig}` | `config.orchestrator` / `config.worker`    | done                                           |
-| `env`                             | `map[string]string`    | `config.env`                               | done                                           |
-| `symlinks`                        | `[]string`             | `config.symlinks`                          | done                                           |
-| `postCreate`                      | `[]string`             | `config.postCreate`                        | done                                           |
-| `agentRules` / `agentRulesFile`   | string                 | future `config.agentRules*`                | not modeled (partial `SpawnConfig.AgentRules`) |
-| `orchestratorRules`               | string                 | future `config.orchestratorRules`          | not modeled                                    |
-| `tracker`                         | `{plugin, …}`          | future `config.tracker` (adapter-validated) | not modeled                                   |
-| `scm`                             | `{plugin, webhook{…}}` | future `config.scm` (adapter-validated)    | not modeled                                    |
-| `opencodeIssueSessionStrategy`    | enum                   | future `config.*`                          | not modeled                                    |
-| `reactions`                       | per-project overrides  | future (own slice)                         | not modeled                                    |
+| YAML field                        | Type                   | Home                                        | Status                                         |
+| --------------------------------- | ---------------------- | ------------------------------------------- | ---------------------------------------------- |
+| `name`                            | string                 | `projects.display_name` (column)            | done                                           |
+| `repo`                            | string                 | `projects.repo_origin_url` (column)         | done                                           |
+| `path`                            | string                 | `projects.path` (column)                    | done                                           |
+| `defaultBranch`                   | string                 | `config.defaultBranch`                      | done                                           |
+| `sessionPrefix`                   | string                 | `config.sessionPrefix`                      | done                                           |
+| `agentConfig`                     | `{model, permissions}` | `config.agentConfig`                        | done                                           |
+| `orchestrator`/`worker` overrides | `{agent, agentConfig}` | `config.orchestrator` / `config.worker`     | done                                           |
+| `env`                             | `map[string]string`    | `config.env`                                | done                                           |
+| `symlinks`                        | `[]string`             | `config.symlinks`                           | done                                           |
+| `postCreate`                      | `[]string`             | `config.postCreate`                         | done                                           |
+| `agentRules` / `agentRulesFile`   | string                 | future `config.agentRules*`                 | not modeled (partial `SpawnConfig.AgentRules`) |
+| `orchestratorRules`               | string                 | future `config.orchestratorRules`           | not modeled                                    |
+| `tracker`                         | `{plugin, …}`          | future `config.tracker` (adapter-validated) | not modeled                                    |
+| `scm`                             | `{plugin, webhook{…}}` | future `config.scm` (adapter-validated)     | not modeled                                    |
+| `opencodeIssueSessionStrategy`    | enum                   | future `config.*`                           | not modeled                                    |
+| `reactions`                       | per-project overrides  | future (own slice)                          | not modeled                                    |
 
 ## Typed model
 
@@ -133,9 +133,10 @@ per-group endpoints:
     `--post-create` (repeatable)
   - `--config-json '{…}'` to pass the whole object, `--clear` to remove all
     config, `--json` to print the updated project
-  
+
   `set-config` replaces the config; there are no per-field subcommands such as
   `ao project env set`. `ao project get <id>` prints the resolved config.
+
 - **UI** — a generated typed form, driven by the OpenAPI schema for the config
   object.
 
