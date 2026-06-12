@@ -15,6 +15,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/reaper"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	reviewrunner "github.com/aoagents/agent-orchestrator/backend/internal/review_runner"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
@@ -103,7 +104,7 @@ func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store,
 		Sessions: store,
 		PRs:      store,
 		Projects: store,
-		Runner:   reviewsvc.NewAgentRunner(agents, runtime),
+		Runner:   reviewrunner.New(agents, runtime),
 	})
 	return sessionSvc, reviewSvc, nil
 }
