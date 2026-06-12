@@ -1484,6 +1484,8 @@ components:
           type: string
         ok:
           type: boolean
+        pushError:
+          type: string
         pushed:
           type: boolean
         sessionId:

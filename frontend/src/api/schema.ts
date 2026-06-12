@@ -543,6 +543,7 @@ export interface components {
         GitCommitResponse: {
             branch: string;
             ok: boolean;
+            pushError?: string;
             pushed: boolean;
             sessionId: string;
             sha: string;
