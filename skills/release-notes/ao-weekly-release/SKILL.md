@@ -31,12 +31,12 @@ Requirements: `gh` CLI authenticated against `ComposioHQ/agent-orchestrator`, `p
 
 Flags:
 
-| Flag | Default | Purpose |
-|---|---|---|
-| `--mode` | `scheduled` | `scheduled` or `on-demand`. Recorded in the footer. |
-| `--since` | 7 days ago | ISO date. Overrides the default weekly window. |
-| `--repo` | `ComposioHQ/agent-orchestrator` | Target repo. |
-| `--output` | stdout | Write the markdown to a file instead of stdout. |
+| Flag       | Default                         | Purpose                                             |
+| ---------- | ------------------------------- | --------------------------------------------------- |
+| `--mode`   | `scheduled`                     | `scheduled` or `on-demand`. Recorded in the footer. |
+| `--since`  | 7 days ago                      | ISO date. Overrides the default weekly window.      |
+| `--repo`   | `ComposioHQ/agent-orchestrator` | Target repo.                                        |
+| `--output` | stdout                          | Write the markdown to a file instead of stdout.     |
 
 Exit codes: `0` success, `1` input/validation error, `2` `gh` query failure, `3` no activity in the window (the cron should post a short "quiet week" message instead of the full template).
 
@@ -67,14 +67,14 @@ The output is a single markdown document. Section order is fixed — do not reor
 
 The runner is deterministic and must never fabricate data. Specific failure modes:
 
-| Failure | Behavior |
-|---|---|
-| `gh` not on PATH or not authenticated | Exit `2` with a clear stderr message. No partial output. |
-| No merged PRs in the window | Exit `3`. Cron posts the "quiet week" Discord message instead. |
-| GitHub API rate-limited | Retry once after 30s, then exit `2`. |
-| A single PR query fails | Skip that PR, note the count in stderr, continue. Do not fail the whole run over one bad entry. |
-| Star count unavailable | Render `Stars: (unavailable)`. Do not block the post. |
-| Commit count mismatch between `gh` and `git log` | Prefer `git log` — the local checkout is the source of truth. |
+| Failure                                          | Behavior                                                                                        |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `gh` not on PATH or not authenticated            | Exit `2` with a clear stderr message. No partial output.                                        |
+| No merged PRs in the window                      | Exit `3`. Cron posts the "quiet week" Discord message instead.                                  |
+| GitHub API rate-limited                          | Retry once after 30s, then exit `2`.                                                            |
+| A single PR query fails                          | Skip that PR, note the count in stderr, continue. Do not fail the whole run over one bad entry. |
+| Star count unavailable                           | Render `Stars: (unavailable)`. Do not block the post.                                           |
+| Commit count mismatch between `gh` and `git log` | Prefer `git log` — the local checkout is the source of truth.                                   |
 
 The runner never invents PR numbers, contributor names, or summary text. Every data point in the output must be traceable to a `gh` or `git` command in `run.py`.
 

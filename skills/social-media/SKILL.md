@@ -20,6 +20,7 @@ Every author sounds different. "Builder tone" is the floor, not the ceiling.
 ## Platform Rules
 
 ### X (Twitter)
+
 - Single post: max 280 chars (or up to ~600 if user has Premium)
 - Thread: 1/ 2/ 3/ numbering, first tweet is the hook, last tweet is CTA
 - First tweet must stand alone — it's what gets retweeted
@@ -28,7 +29,9 @@ Every author sounds different. "Builder tone" is the floor, not the ceiling.
 - Use line breaks for visual rhythm
 
 #### X Media Strategy
+
 Posts with media outperform text-only. Always consider:
+
 - **Screenshots:** For dashboard/UI features — show, don't tell
 - **GIFs/Demos:** For workflow changes — 5-10 second loops
 - **4-image grid:** For multi-feature showcases — each image = one feature
@@ -36,11 +39,13 @@ Posts with media outperform text-only. Always consider:
 - When a post needs a visual, use `image_generate` to create one — don't just describe it
 
 #### Thread vs Single Post Decision
+
 - **Single post:** One feature, one metric, one announcement, under 280 chars
 - **Thread:** Multiple features, a story arc, technical breakdown, or anything that needs "and here's why"
 - If you're cramming to fit 280 chars, it's probably a thread
 
 ### LinkedIn
+
 - No character limit but sweet spot is 150-300 words
 - **Hook character limit: ~210 chars before "see more" fold** — the entire hook MUST fit before the fold
 - First line is everything — it's the "see more" hook
@@ -52,6 +57,7 @@ Posts with media outperform text-only. Always consider:
 - **Blank lines matter** — double line break between paragraphs creates the visual rhythm that keeps people scrolling
 
 #### LinkedIn Bold Text
+
 Use Unicode bold for key phrases. Common mappings:
 
 ```
@@ -63,6 +69,7 @@ n=𝗻 o=𝗼 p=𝗽 q=𝗾 r=𝗿 s=𝘀 t=𝘁 u=𝘂 v=𝘃 w=𝘄 x=𝘅 y=�
 ```
 
 Apply bold to:
+
 - Opening stat/hook
 - Section headers within post
 - Key metrics
@@ -74,6 +81,7 @@ Don't over-bold — if everything is bold, nothing is.
 ## Style Guide
 
 ### Voice
+
 - Builder tone — someone who ships, not someone who advises
 - First person, direct
 - Confident but not arrogant
@@ -81,7 +89,9 @@ Don't over-bold — if everything is bold, nothing is.
 - No corporate speak, no buzzword soup
 
 ### Banned Phrases
+
 Never use these:
+
 - "I'm thrilled/excited to announce"
 - "Leveraging" / "Synergy"
 - "Game-changer" / "Revolutionary"
@@ -95,21 +105,25 @@ Never use these:
 Don't start from scratch. Use these proven patterns:
 
 ### Stat-led hooks
+
 - "We just hit [NUMBER] [metric]. Here's what actually moved the needle:"
 - "[NUMBER]% of [audience] don't know [surprising fact]. We didn't either."
 - "From [start] to [end] in [timeframe]. No funding, no team of 50."
 
 ### Contrarian hooks
+
 - "Hot take: [contrarian position]. Here's why:"
 - "Everyone says [common advice]. They're wrong. Here's what worked instead:"
 - "Unpopular opinion: [bold claim]. And I have the data to back it up."
 
 ### Story hooks
+
 - "Last [timeframe], [dramatic situation]. Today, [result]. Here's what happened:"
 - "We [did something unexpected]. [Surprising outcome]."
 - "[Number] [units] later, here's the one thing I wish I knew on day 1:"
 
 ### Product hooks
+
 - "[Thing] just got [dramatic improvement]. [Before] → [After]:"
 - "We open-sourced [thing]. [One-line what it does]. [Star/link]"
 - "[Problem] is solved. Not partially. Actually solved. Here's how:"
@@ -117,6 +131,7 @@ Don't start from scratch. Use these proven patterns:
 ## Structure Templates
 
 ### LinkedIn
+
 1. Hook — bold stat, surprising claim, or punchy opener (1 line, under 210 chars)
 2. Story — what happened, keep paragraphs short
 3. Numbers — concrete metrics in arrow-bullet format
@@ -124,11 +139,13 @@ Don't start from scratch. Use these proven patterns:
 5. CTA — link + next step (not "thoughts?")
 
 ### X Single Post
+
 1. Hook line
 2. Key details (2-3 lines)
 3. Link
 
 ### X Thread
+
 1. Hook + 🧵
 2. Context/backstory
 3. Numbers/details (1-2 tweets)
@@ -140,20 +157,24 @@ Don't start from scratch. Use these proven patterns:
 Don't end with "thoughts?" — use CTAs that actually drive action:
 
 ### Repo/Product
+
 - "Star the repo → [link]"
 - "Try it: [one-line command]"
 - "npm i -g [package] and see for yourself → [link]"
 
 ### Community
+
 - "Join [number] builders in Discord → [link]"
 - "What are you building? Drop it below 👇"
 
 ### Content
+
 - "Full breakdown → [link]"
 - "Read the docs → [link]"
 - "Full release notes → [link]"
 
 ### Engagement
+
 - "What's your [take/experience] with [topic]?"
 - "RT if you've felt this pain ↓"
 
@@ -161,20 +182,21 @@ Don't end with "thoughts?" — use CTAs that actually drive action:
 
 When the same content goes to both X and LinkedIn, restructure — don't just reformat:
 
-| Aspect | X | LinkedIn |
-|--------|---|----------|
-| Length | Compressed, punchy | Story arc with whitespace |
-| Narrative | Bullet points, rapid fire | Paragraphs, breathing room |
-| Numbers | Inline, one per tweet | Arrow bullets, grouped |
-| Hook | Shocking stat or hot take | Personal story or bold claim |
-| CTA | Link only | Link + context |
-| Formatting | Line breaks, no bold | Unicode bold, section breaks |
+| Aspect     | X                         | LinkedIn                     |
+| ---------- | ------------------------- | ---------------------------- |
+| Length     | Compressed, punchy        | Story arc with whitespace    |
+| Narrative  | Bullet points, rapid fire | Paragraphs, breathing room   |
+| Numbers    | Inline, one per tweet     | Arrow bullets, grouped       |
+| Hook       | Shocking stat or hot take | Personal story or bold claim |
+| CTA        | Link only                 | Link + context               |
+| Formatting | Line breaks, no bold      | Unicode bold, section breaks |
 
 **Rule:** Write LinkedIn first (full story), then compress into X. Not the other way around — you can't expand a tweet into a story.
 
 ## Post Types
 
 ### Milestone Celebration (stars, users, revenue)
+
 - Lead with the number
 - Tell the journey (compressed)
 - Show what was shipped
@@ -183,6 +205,7 @@ When the same content goes to both X and LinkedIn, restructure — don't just re
 - Keep it a story, not a press release
 
 ### Product Launch / Feature Ship
+
 - What changed and why it matters
 - Before → after (if applicable)
 - One-line install/usage
@@ -190,12 +213,14 @@ When the same content goes to both X and LinkedIn, restructure — don't just re
 - **Always attach a visual** — screenshot, GIF, or generated image
 
 ### Hot Take / Trend Response
+
 - Acknowledge the trend
 - State your position early
 - Back it with what you've built
 - Don't trash competitors — position yourself
 
 ### Article Promotion
+
 - Pull the single most interesting insight
 - Don't summarize the whole article
 - Make people want to click

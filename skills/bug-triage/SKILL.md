@@ -18,11 +18,11 @@ Triage bugs into well-structured GitHub issues on the correct upstream repo.
 
 ### 2a. Extract the report
 
-| Source | How to gather |
-|--------|---------------|
+| Source                   | How to gather                                                                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
 | **Discord/Slack thread** | Read full thread. Extract: reporter name, original description (the thread starter, not whoever tagged you), screenshots, follow-ups |
-| **GitHub issue** | `gh issue view <number> --repo <repo> --json body,comments` |
-| **Live observation** | Pull live state via observability tools |
+| **GitHub issue**         | `gh issue view <number> --repo <repo> --json body,comments`                                                                          |
+| **Live observation**     | Pull live state via observability tools                                                                                              |
 
 ### 2b. Minimum viable report gate
 
@@ -33,6 +33,7 @@ Before tracing code, verify the report has enough substance:
 **Required (2 of 4):** OS/shell/runtime, AO version (`ao --version`), reproducibility (consistent vs intermittent), reproduction steps
 
 If insufficient, ask:
+
 > "I'd like to triage this but need more info: (1) **What happened?** (error/behavior), (2) **Where?** (page/command), (3) **When did it start?**, (4) **How to reproduce?**"
 
 ### 2c. Local diagnostics (if bug is on same machine)
@@ -77,10 +78,12 @@ git fetch origin main && git log --oneline origin/main -5   # current HEAD
 ```
 
 **Git archaeology** — find which commits introduced/removed specific code:
+
 ```bash
 git log --oneline -S 'exact-string' -- <file>
 git show <sha> -- <file> | grep -B 5 -A 10 'pattern'
 ```
+
 Example: [#1391](https://github.com/ComposioHQ/agent-orchestrator/issues/1391) traced a mobile layout break to a `display: flex` → `display: grid` change.
 
 **Research upstream dependencies** (xterm, node-pty, React, etc.) — check installed vs latest version, search their GitHub issues, check changelogs. Root cause is often upstream.
@@ -104,6 +107,7 @@ Key files: `packages/core/src/platform.ts`, `docs/CROSS_PLATFORM.md`, `packages/
 ### 3c. Stop-and-ask triggers
 
 Stop and ask for more info if:
+
 - **3 failed hypotheses** — traced 3 code paths, none explain it
 - **Root cause is upstream** — file with upstream reference, don't guess a local fix
 - **UI-only bug** and you can't screenshot — ask reporter to describe
@@ -197,20 +201,20 @@ EOF
 gh issue edit <number> --repo <repo> --add-label "bug"
 ```
 
-| Priority label | Criteria |
-|----------------|----------|
-| `priority: critical` | Data loss, security, system down |
-| `priority: high` | Core feature broken, no workaround |
-| `priority: medium` | Feature degraded, workaround exists |
-| `priority: low` | Cosmetic, edge case |
+| Priority label       | Criteria                            |
+| -------------------- | ----------------------------------- |
+| `priority: critical` | Data loss, security, system down    |
+| `priority: high`     | Core feature broken, no workaround  |
+| `priority: medium`   | Feature degraded, workaround exists |
+| `priority: low`      | Cosmetic, edge case                 |
 
 **Confidence scoring** (include in issue body):
 
-| Level | Meaning | Extra labels |
-|-------|---------|-------------|
-| **High** | Traced exact code path, specific lines, mechanism explained | `bug` only |
-| **Medium** | Strong hypothesis but unconfirmed | `bug`, `to-explore` |
-| **Low** | Can't trace, multiple conflicting theories | `bug`, `to-reproduce` |
+| Level      | Meaning                                                     | Extra labels          |
+| ---------- | ----------------------------------------------------------- | --------------------- |
+| **High**   | Traced exact code path, specific lines, mechanism explained | `bug` only            |
+| **Medium** | Strong hypothesis but unconfirmed                           | `bug`, `to-explore`   |
+| **Low**    | Can't trace, multiple conflicting theories                  | `bug`, `to-reproduce` |
 
 Example: [PR #1608](https://github.com/ComposioHQ/agent-orchestrator/pull/1608) was diagnosed High as xterm v6 issue — real cause was a `=` prefix on tmux `set-option`. Should have been Medium.
 
@@ -219,6 +223,7 @@ Example: [PR #1608](https://github.com/ComposioHQ/agent-orchestrator/pull/1608) 
 ### 5e. Cross-link related issues
 
 Search by subsystem and add a `## Related` section to the issue body:
+
 ```
 ## Related
 - [#1020](url) — stale session blocking ao start (same subsystem)
@@ -259,17 +264,18 @@ Issue URL, PR URL (if created), labels, root cause summary, whether fix agent wa
 
 ### A. Subsystem Quick Reference
 
-| Subsystem | Collect | Key files |
-|-----------|---------|-----------|
-| **CLI** (`ao start/stop/spawn`) | Config YAML, install method, version, OS | `packages/cli/src/commands/` |
-| **Web UI** | Screenshot, browser, viewport | `packages/web/src/components/`, `globals.css` |
-| **Terminal** | Runtime type, tmux version, shell | `DirectTerminal.tsx`, `useXtermTerminal.ts` |
-| **Lifecycle** | State transitions, session IDs | `core/src/lifecycle-manager.ts`, `core/src/lifecycle-state.ts` |
-| **Sessions** | Session ID, spawn config, runtime | `core/src/session-manager.ts` |
-| **Plugins** | Plugin name, agent version | `packages/plugins/<agent>/` |
-| **Config** | YAML contents, project path | `packages/core/src/config.ts` |
+| Subsystem                       | Collect                                  | Key files                                                      |
+| ------------------------------- | ---------------------------------------- | -------------------------------------------------------------- |
+| **CLI** (`ao start/stop/spawn`) | Config YAML, install method, version, OS | `packages/cli/src/commands/`                                   |
+| **Web UI**                      | Screenshot, browser, viewport            | `packages/web/src/components/`, `globals.css`                  |
+| **Terminal**                    | Runtime type, tmux version, shell        | `DirectTerminal.tsx`, `useXtermTerminal.ts`                    |
+| **Lifecycle**                   | State transitions, session IDs           | `core/src/lifecycle-manager.ts`, `core/src/lifecycle-state.ts` |
+| **Sessions**                    | Session ID, spawn config, runtime        | `core/src/session-manager.ts`                                  |
+| **Plugins**                     | Plugin name, agent version               | `packages/plugins/<agent>/`                                    |
+| **Config**                      | YAML contents, project path              | `packages/core/src/config.ts`                                  |
 
 **Misrouting patterns:**
+
 - Terminal bugs → tmux (runtime-tmux) vs xterm (web) vs PTY (runtime-process/Windows). Trace where bytes flow.
 - "Session stuck" → lifecycle state machine vs agent process vs runtime connection.
 - "Config not saving" → config loading (c12) vs project registration (running-state.ts) vs YAML write (permissions).
