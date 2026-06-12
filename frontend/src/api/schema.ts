@@ -615,6 +615,8 @@ export interface components {
         SubmitReviewInput: {
             /** @description Review body recorded by AO. Required for changes_requested. */
             body: string;
+            /** @description Review run id being completed. */
+            runId: string;
             /** @description Review verdict: approved or changes_requested. */
             verdict: string;
         };
