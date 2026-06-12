@@ -149,36 +149,42 @@ func (s *Service) Trigger(ctx context.Context, workerID domain.SessionID) (domai
 	}
 
 	now := s.clock()
+	iteration := s.nextIteration(ctx, workerID)
+
+	// Launch the reviewer first, then persist the pass with a status that
+	// reflects the launch outcome: running on success, failed if it never
+	// started. This avoids writing a row that has to be corrected afterwards.
+	runErr := s.runner.Run(ctx, RunSpec{
+		WorkerID:      workerID,
+		Harness:       harness,
+		WorkspacePath: worker.Metadata.WorkspacePath,
+		PRURL:         prURL,
+	})
+	status := domain.ReviewRunRunning
+	if runErr != nil {
+		status = domain.ReviewRunFailed
+	}
+
 	review, err := s.upsertReview(ctx, worker, harness, prURL, now)
 	if err != nil {
 		return domain.ReviewRun{}, err
 	}
-
 	run := domain.ReviewRun{
 		ID:        s.newID(),
 		ReviewID:  review.ID,
 		SessionID: workerID,
 		Harness:   harness,
 		PRURL:     prURL,
-		Status:    domain.ReviewRunRunning,
+		Status:    status,
 		Verdict:   domain.VerdictNone,
-		Iteration: s.nextIteration(ctx, workerID),
+		Iteration: iteration,
 		CreatedAt: now,
 	}
 	if err := s.store.InsertReviewRun(ctx, run); err != nil {
 		return domain.ReviewRun{}, err
 	}
-
-	if err := s.runner.Run(ctx, RunSpec{
-		WorkerID:      workerID,
-		Harness:       harness,
-		WorkspacePath: worker.Metadata.WorkspacePath,
-		PRURL:         prURL,
-	}); err != nil {
-		// The pass never launched; record it as failed so a stale running row
-		// does not look like an in-flight review forever.
-		_ = s.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunFailed, domain.VerdictNone, "")
-		return domain.ReviewRun{}, fmt.Errorf("launch reviewer: %w", err)
+	if runErr != nil {
+		return run, fmt.Errorf("launch reviewer: %w", runErr)
 	}
 	return run, nil
 }
