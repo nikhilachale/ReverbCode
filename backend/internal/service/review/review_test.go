@@ -14,6 +14,7 @@ import (
 type fakeStore struct {
 	review    *domain.Review
 	runs      []domain.ReviewRun
+	inserted  bool
 	upsertErr error
 	insertErr error
 	updateErr error
@@ -37,21 +38,31 @@ func (f *fakeStore) InsertReviewRun(_ context.Context, r domain.ReviewRun) error
 	if f.insertErr != nil {
 		return f.insertErr
 	}
+	f.inserted = true
 	f.runs = append(f.runs, r)
 	return nil
 }
-func (f *fakeStore) UpdateReviewRunResult(_ context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body string) error {
+func (f *fakeStore) UpdateReviewRunResult(_ context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body string) (bool, error) {
 	if f.updateErr != nil {
-		return f.updateErr
+		return false, f.updateErr
 	}
 	for i := range f.runs {
 		if f.runs[i].ID == id {
 			f.runs[i].Status = status
 			f.runs[i].Verdict = verdict
 			f.runs[i].Body = body
+			return true, nil
 		}
 	}
-	return nil
+	return false, nil
+}
+func (f *fakeStore) GetReviewRun(_ context.Context, id string) (domain.ReviewRun, bool, error) {
+	for _, run := range f.runs {
+		if run.ID == id {
+			return run, true, nil
+		}
+	}
+	return domain.ReviewRun{}, false, nil
 }
 func (f *fakeStore) GetLatestReviewRunBySession(_ context.Context, _ domain.SessionID) (domain.ReviewRun, bool, error) {
 	if len(f.runs) == 0 {
@@ -85,12 +96,17 @@ func (f fakeProjects) GetProject(_ context.Context, id string) (domain.ProjectRe
 }
 
 type fakeRunner struct {
-	spec RunSpec
-	err  error
-	ran  bool
+	store      *fakeStore
+	requireRun bool
+	spec       RunSpec
+	err        error
+	ran        bool
 }
 
 func (f *fakeRunner) Run(_ context.Context, spec RunSpec) error {
+	if f.requireRun && (f.store == nil || !f.store.inserted) {
+		return errors.New("review run was not inserted before launch")
+	}
 	f.ran = true
 	f.spec = spec
 	return f.err
@@ -122,7 +138,7 @@ func TestTriggerCreatesPendingRunAndLaunchesReviewer(t *testing.T) {
 	prs := fakePRs{prs: []domain.PullRequest{{URL: "https://github.com/o/r/pull/1"}}}
 	// A reviewer-only harness (greptile) is configured; it wins over the worker harness.
 	projects := fakeProjects{cfg: domain.ProjectConfig{Reviewers: []domain.ReviewerConfig{{Harness: domain.ReviewerHarness("greptile")}}}}
-	runner := &fakeRunner{}
+	runner := &fakeRunner{store: store, requireRun: true}
 	svc := newServiceForTest(store, sessions, prs, projects, runner)
 
 	run, err := svc.Trigger(context.Background(), "mer-1")
@@ -132,7 +148,7 @@ func TestTriggerCreatesPendingRunAndLaunchesReviewer(t *testing.T) {
 	if run.Status != domain.ReviewRunRunning || run.Iteration != 1 || run.Harness != domain.ReviewerHarness("greptile") {
 		t.Fatalf("run = %+v", run)
 	}
-	if !runner.ran || runner.spec.WorkspacePath != "/ws/mer-1" || runner.spec.Harness != domain.ReviewerHarness("greptile") {
+	if !runner.ran || runner.spec.RunID != run.ID || runner.spec.WorkspacePath != "/ws/mer-1" || runner.spec.Harness != domain.ReviewerHarness("greptile") {
 		t.Fatalf("runner spec = %+v ran=%v", runner.spec, runner.ran)
 	}
 	if store.review == nil || store.review.PRURL != "https://github.com/o/r/pull/1" {
@@ -210,7 +226,7 @@ func TestTriggerRejectsMissingWorkerPRAndState(t *testing.T) {
 
 func TestTriggerLaunchFailureMarksRunFailed(t *testing.T) {
 	store := &fakeStore{}
-	runner := &fakeRunner{err: errors.New("boom")}
+	runner := &fakeRunner{store: store, requireRun: true, err: errors.New("boom")}
 	svc := newServiceForTest(store, fakeSessions{rec: liveWorker(), ok: true},
 		fakePRs{prs: []domain.PullRequest{{URL: "u"}}}, fakeProjects{}, runner)
 	if _, err := svc.Trigger(context.Background(), "mer-1"); err == nil {
@@ -222,10 +238,10 @@ func TestTriggerLaunchFailureMarksRunFailed(t *testing.T) {
 }
 
 func TestSubmitRecordsVerdictAndBody(t *testing.T) {
-	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", PRURL: "u", Status: domain.ReviewRunRunning}}}
+	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", PRURL: "u", Status: domain.ReviewRunRunning}}}
 	svc := newServiceForTest(store, fakeSessions{rec: liveWorker(), ok: true}, fakePRs{}, fakeProjects{}, &fakeRunner{})
 
-	run, err := svc.Submit(context.Background(), "mer-1", domain.VerdictChangesRequested, "please fix")
+	run, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "please fix")
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -241,18 +257,55 @@ func TestSubmitValidation(t *testing.T) {
 	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", Status: domain.ReviewRunRunning}}}
 	svc := newServiceForTest(store, fakeSessions{rec: liveWorker(), ok: true}, fakePRs{}, fakeProjects{}, &fakeRunner{})
 
-	if _, err := svc.Submit(context.Background(), "mer-1", "garbage", "b"); !errors.Is(err, ErrInvalid) {
+	if _, err := svc.Submit(context.Background(), "mer-1", "run-1", "garbage", "b"); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("bad verdict err = %v", err)
 	}
-	if _, err := svc.Submit(context.Background(), "mer-1", domain.VerdictChangesRequested, ""); !errors.Is(err, ErrInvalid) {
+	if _, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, ""); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("empty body err = %v", err)
 	}
 }
 
 func TestSubmitNoRun(t *testing.T) {
 	svc := newServiceForTest(&fakeStore{}, fakeSessions{rec: liveWorker(), ok: true}, fakePRs{}, fakeProjects{}, &fakeRunner{})
-	if _, err := svc.Submit(context.Background(), "mer-1", domain.VerdictApproved, ""); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictApproved, ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestSubmitTargetsSpecifiedRun(t *testing.T) {
+	store := &fakeStore{runs: []domain.ReviewRun{
+		{ID: "run-1", SessionID: "mer-1", Status: domain.ReviewRunRunning, Iteration: 1},
+		{ID: "run-2", SessionID: "mer-1", Status: domain.ReviewRunRunning, Iteration: 2},
+	}}
+	svc := newServiceForTest(store, fakeSessions{rec: liveWorker(), ok: true}, fakePRs{}, fakeProjects{}, &fakeRunner{})
+
+	run, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictApproved, "")
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if run.ID != "run-1" || store.runs[0].Status != domain.ReviewRunComplete {
+		t.Fatalf("run-1 not completed: returned=%+v stored=%+v", run, store.runs[0])
+	}
+	if store.runs[1].Status != domain.ReviewRunRunning {
+		t.Fatalf("run-2 should remain running: %+v", store.runs[1])
+	}
+}
+
+func TestSubmitRejectsNonRunningRun(t *testing.T) {
+	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", Status: domain.ReviewRunComplete}}}
+	svc := newServiceForTest(store, fakeSessions{rec: liveWorker(), ok: true}, fakePRs{}, fakeProjects{}, &fakeRunner{})
+
+	if _, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictApproved, ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+}
+
+func TestSubmitRejectsRunForDifferentWorker(t *testing.T) {
+	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", SessionID: "other-1", Status: domain.ReviewRunRunning}}}
+	svc := newServiceForTest(store, fakeSessions{rec: liveWorker(), ok: true}, fakePRs{}, fakeProjects{}, &fakeRunner{})
+
+	if _, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictApproved, ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
 	}
 }
 

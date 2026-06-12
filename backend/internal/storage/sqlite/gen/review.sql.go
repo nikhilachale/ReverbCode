@@ -55,6 +55,29 @@ func (q *Queries) GetReviewBySession(ctx context.Context, sessionID domain.Sessi
 	return i, err
 }
 
+const getReviewRun = `-- name: GetReviewRun :one
+SELECT id, review_id, session_id, harness, pr_url, status, verdict, iteration, body, created_at
+FROM review_run WHERE id = ?
+`
+
+func (q *Queries) GetReviewRun(ctx context.Context, id string) (ReviewRun, error) {
+	row := q.db.QueryRowContext(ctx, getReviewRun, id)
+	var i ReviewRun
+	err := row.Scan(
+		&i.ID,
+		&i.ReviewID,
+		&i.SessionID,
+		&i.Harness,
+		&i.PRURL,
+		&i.Status,
+		&i.Verdict,
+		&i.Iteration,
+		&i.Body,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const insertReviewRun = `-- name: InsertReviewRun :exec
 INSERT INTO review_run (id, review_id, session_id, harness, pr_url, status, verdict, iteration, body, created_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -128,8 +151,8 @@ func (q *Queries) ListReviewRunsBySession(ctx context.Context, sessionID domain.
 	return items, nil
 }
 
-const updateReviewRunResult = `-- name: UpdateReviewRunResult :exec
-UPDATE review_run SET status = ?, verdict = ?, body = ? WHERE id = ?
+const updateReviewRunResult = `-- name: UpdateReviewRunResult :execrows
+UPDATE review_run SET status = ?, verdict = ?, body = ? WHERE id = ? AND status = 'running'
 `
 
 type UpdateReviewRunResultParams struct {
@@ -139,14 +162,17 @@ type UpdateReviewRunResultParams struct {
 	ID      string
 }
 
-func (q *Queries) UpdateReviewRunResult(ctx context.Context, arg UpdateReviewRunResultParams) error {
-	_, err := q.db.ExecContext(ctx, updateReviewRunResult,
+func (q *Queries) UpdateReviewRunResult(ctx context.Context, arg UpdateReviewRunResultParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateReviewRunResult,
 		arg.Status,
 		arg.Verdict,
 		arg.Body,
 		arg.ID,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const upsertReview = `-- name: UpsertReview :exec

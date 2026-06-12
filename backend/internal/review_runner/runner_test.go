@@ -52,6 +52,7 @@ func TestRunLaunchesResolvedReviewer(t *testing.T) {
 	r := New(fakeResolver{reviewer: reviewer, ok: true}, rt)
 
 	err := r.Run(context.Background(), reviewsvc.RunSpec{
+		RunID:         "run-1",
 		WorkerID:      "mer-1",
 		Harness:       domain.ReviewerHarness("greptile"),
 		WorkspacePath: "/ws/mer-1",
@@ -61,15 +62,18 @@ func TestRunLaunchesResolvedReviewer(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	// The reviewer adapter receives the invocation (PR + worktree + reviewer id).
-	if reviewer.gotInv.PRURL != "https://github.com/o/r/pull/1" || reviewer.gotInv.WorkspacePath != "/ws/mer-1" || reviewer.gotInv.ReviewerID != "review-mer-1" {
+	if reviewer.gotInv.PRURL != "https://github.com/o/r/pull/1" || reviewer.gotInv.WorkspacePath != "/ws/mer-1" || reviewer.gotInv.ReviewerID != "review-run-1" {
 		t.Fatalf("invocation = %+v", reviewer.gotInv)
 	}
 	// The runtime launches the adapter's argv over the worker's worktree.
 	if !rt.created || rt.cfg.WorkspacePath != "/ws/mer-1" || rt.cfg.Argv[0] != "greptile" {
 		t.Fatalf("runtime cfg = %+v created=%v", rt.cfg, rt.created)
 	}
-	// AO_REVIEW_WORKER is added; adapter env is preserved.
-	if rt.cfg.Env["AO_REVIEW_WORKER"] != "mer-1" || rt.cfg.Env["GREPTILE_MODE"] != "ci" {
+	if rt.cfg.SessionID != "review-run-1" {
+		t.Fatalf("runtime session id = %q, want review-run-1", rt.cfg.SessionID)
+	}
+	// AO_REVIEW_WORKER and AO_REVIEW_RUN_ID are added; adapter env is preserved.
+	if rt.cfg.Env["AO_REVIEW_WORKER"] != "mer-1" || rt.cfg.Env["AO_REVIEW_RUN_ID"] != "run-1" || rt.cfg.Env["GREPTILE_MODE"] != "ci" {
 		t.Fatalf("env = %v", rt.cfg.Env)
 	}
 }

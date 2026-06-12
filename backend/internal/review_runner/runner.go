@@ -37,7 +37,7 @@ func (r *Runner) Run(ctx context.Context, spec reviewsvc.RunSpec) error {
 	if !ok {
 		return fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
 	}
-	reviewerID := "review-" + string(spec.WorkerID)
+	reviewerID := "review-" + spec.RunID
 	cmd, err := reviewer.ReviewCommand(ctx, ports.ReviewInvocation{
 		ReviewerID:      reviewerID,
 		WorkerSessionID: spec.WorkerID,
@@ -58,14 +58,14 @@ func (r *Runner) Run(ctx context.Context, spec reviewsvc.RunSpec) error {
 	return nil
 }
 
-// reviewerEnv merges the adapter's env with AO_REVIEW_WORKER, which carries the
-// worker the reviewer reports against so its `ao review submit` resolves the
-// right worker session without a flag.
+// reviewerEnv merges the adapter's env with AO_REVIEW_WORKER and
+// AO_REVIEW_RUN_ID so `ao review submit` resolves the exact run being completed.
 func reviewerEnv(spec reviewsvc.RunSpec, adapterEnv map[string]string) map[string]string {
-	env := make(map[string]string, len(adapterEnv)+1)
+	env := make(map[string]string, len(adapterEnv)+2)
 	for k, v := range adapterEnv {
 		env[k] = v
 	}
 	env["AO_REVIEW_WORKER"] = string(spec.WorkerID)
+	env["AO_REVIEW_RUN_ID"] = spec.RunID
 	return env
 }

@@ -31,12 +31,14 @@ type reviewRunResponse struct {
 
 // submitReviewRequest mirrors controllers.SubmitReviewInput.
 type submitReviewRequest struct {
+	RunID   string `json:"runId"`
 	Verdict string `json:"verdict"`
 	Body    string `json:"body"`
 }
 
 type reviewSubmitOptions struct {
 	session string
+	runID   string
 	verdict string
 	body    string
 }
@@ -61,6 +63,7 @@ func newReviewSubmitCommand(ctx *commandContext) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&opts.session, "session", "", "Worker session id (defaults to $AO_REVIEW_WORKER)")
+	cmd.Flags().StringVar(&opts.runID, "run", "", "Review run id (defaults to $AO_REVIEW_RUN_ID)")
 	cmd.Flags().StringVar(&opts.verdict, "verdict", "", "Review verdict: approved or changes_requested (required)")
 	cmd.Flags().StringVar(&opts.body, "body", "", "Path to a Markdown file with the review body")
 	return cmd
@@ -77,6 +80,13 @@ func (c *commandContext) submitReview(cmd *cobra.Command, args []string, opts re
 	if session == "" {
 		return usageError{errors.New("usage: worker session id is required (positional, --session, or $AO_REVIEW_WORKER)")}
 	}
+	runID := strings.TrimSpace(opts.runID)
+	if runID == "" {
+		runID = strings.TrimSpace(os.Getenv("AO_REVIEW_RUN_ID"))
+	}
+	if runID == "" {
+		return usageError{errors.New("usage: review run id is required (--run or $AO_REVIEW_RUN_ID)")}
+	}
 	verdict := strings.TrimSpace(opts.verdict)
 	if verdict == "" {
 		return usageError{errors.New("usage: --verdict is required (approved or changes_requested)")}
@@ -91,7 +101,7 @@ func (c *commandContext) submitReview(cmd *cobra.Command, args []string, opts re
 	}
 	path := "sessions/" + url.PathEscape(session) + "/reviews/submit"
 	var res reviewRunResponse
-	if err := c.postJSON(cmd.Context(), path, submitReviewRequest{Verdict: verdict, Body: body}, &res); err != nil {
+	if err := c.postJSON(cmd.Context(), path, submitReviewRequest{RunID: runID, Verdict: verdict, Body: body}, &res); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintf(cmd.OutOrStdout(), "recorded %s review for %s\n", res.Review.Verdict, session)

@@ -37,6 +37,7 @@ func aliveDeps() Deps { return Deps{ProcessAlive: func(int) bool { return true }
 
 func TestReviewSubmitReadsBodyFile(t *testing.T) {
 	cfg := setConfigEnv(t)
+	t.Setenv("AO_REVIEW_RUN_ID", "run-1")
 	srv, capture := reviewServer(t, http.StatusOK, `{"review":{"verdict":"changes_requested"}}`)
 	writeRunFileFor(t, cfg, srv)
 
@@ -57,7 +58,7 @@ func TestReviewSubmitReadsBodyFile(t *testing.T) {
 	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if req.Verdict != "changes_requested" || req.Body != "please fix" {
+	if req.RunID != "run-1" || req.Verdict != "changes_requested" || req.Body != "please fix" {
 		t.Fatalf("request = %+v", req)
 	}
 }
@@ -65,6 +66,7 @@ func TestReviewSubmitReadsBodyFile(t *testing.T) {
 func TestReviewSubmitUsesEnvWorker(t *testing.T) {
 	cfg := setConfigEnv(t)
 	t.Setenv("AO_REVIEW_WORKER", "mer-7")
+	t.Setenv("AO_REVIEW_RUN_ID", "run-7")
 	srv, capture := reviewServer(t, http.StatusOK, `{"review":{"verdict":"approved"}}`)
 	writeRunFileFor(t, cfg, srv)
 
@@ -78,6 +80,7 @@ func TestReviewSubmitUsesEnvWorker(t *testing.T) {
 
 func TestReviewSubmitMissingVerdictIsUsageError(t *testing.T) {
 	setConfigEnv(t)
+	t.Setenv("AO_REVIEW_RUN_ID", "run-1")
 	_, _, err := executeCLI(t, aliveDeps(), "review", "submit", "mer-1")
 	if got := ExitCode(err); got != 2 {
 		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
@@ -87,6 +90,17 @@ func TestReviewSubmitMissingVerdictIsUsageError(t *testing.T) {
 func TestReviewSubmitMissingWorkerIsUsageError(t *testing.T) {
 	setConfigEnv(t)
 	t.Setenv("AO_REVIEW_WORKER", "")
+	t.Setenv("AO_REVIEW_RUN_ID", "run-1")
+	_, _, err := executeCLI(t, aliveDeps(), "review", "submit", "--verdict", "approved")
+	if got := ExitCode(err); got != 2 {
+		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
+	}
+}
+
+func TestReviewSubmitMissingRunIsUsageError(t *testing.T) {
+	setConfigEnv(t)
+	t.Setenv("AO_REVIEW_WORKER", "mer-1")
+	t.Setenv("AO_REVIEW_RUN_ID", "")
 	_, _, err := executeCLI(t, aliveDeps(), "review", "submit", "--verdict", "approved")
 	if got := ExitCode(err); got != 2 {
 		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)

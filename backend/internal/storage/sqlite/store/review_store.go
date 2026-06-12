@@ -56,16 +56,32 @@ func (s *Store) InsertReviewRun(ctx context.Context, r domain.ReviewRun) error {
 	})
 }
 
-// UpdateReviewRunResult sets the status/verdict/body of a review pass.
-func (s *Store) UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body string) error {
+// UpdateReviewRunResult sets the status/verdict/body of a running review pass.
+func (s *Store) UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body string) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return s.qw.UpdateReviewRunResult(ctx, gen.UpdateReviewRunResultParams{
+	n, err := s.qw.UpdateReviewRunResult(ctx, gen.UpdateReviewRunResultParams{
 		Status:  status,
 		Verdict: verdict,
 		Body:    body,
 		ID:      id,
 	})
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// GetReviewRun returns one review pass by id.
+func (s *Store) GetReviewRun(ctx context.Context, id string) (domain.ReviewRun, bool, error) {
+	row, err := s.qr.GetReviewRun(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.ReviewRun{}, false, nil
+	}
+	if err != nil {
+		return domain.ReviewRun{}, false, fmt.Errorf("get review run %s: %w", id, err)
+	}
+	return reviewRunFromRow(row), true, nil
 }
 
 // GetLatestReviewRunBySession returns the most recent review pass for a worker

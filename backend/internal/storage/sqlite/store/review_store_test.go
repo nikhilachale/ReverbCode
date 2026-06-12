@@ -46,7 +46,7 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 		t.Fatalf("upsert did not refresh fields: %+v", got)
 	}
 
-	// A run inserts pending and updates to complete/changes_requested.
+	// A run inserts running and updates to complete/changes_requested.
 	if err := s.InsertReviewRun(ctx, domain.ReviewRun{
 		ID: "run-1", ReviewID: got.ID, SessionID: rec.ID, Harness: domain.ReviewerHarness("greptile"),
 		PRURL: got.PRURL, Status: domain.ReviewRunRunning, Verdict: domain.VerdictNone,
@@ -54,8 +54,18 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("insert run: %v", err)
 	}
-	if err := s.UpdateReviewRunResult(ctx, "run-1", domain.ReviewRunComplete, domain.VerdictChangesRequested, "please fix"); err != nil {
+	if ok, err := s.UpdateReviewRunResult(ctx, "run-1", domain.ReviewRunComplete, domain.VerdictChangesRequested, "please fix"); err != nil {
 		t.Fatalf("update run: %v", err)
+	} else if !ok {
+		t.Fatal("update run: got ok=false")
+	}
+
+	gotRun, ok, err := s.GetReviewRun(ctx, "run-1")
+	if err != nil || !ok {
+		t.Fatalf("get run: ok=%v err=%v", ok, err)
+	}
+	if gotRun.ID != "run-1" || gotRun.SessionID != rec.ID {
+		t.Fatalf("get run = %+v", gotRun)
 	}
 
 	latest, ok, err := s.GetLatestReviewRunBySession(ctx, rec.ID)
@@ -73,6 +83,12 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	if len(runs) != 1 || runs[0].ID != "run-1" {
 		t.Fatalf("list runs = %+v", runs)
 	}
+
+	if ok, err := s.UpdateReviewRunResult(ctx, "run-1", domain.ReviewRunComplete, domain.VerdictApproved, "again"); err != nil {
+		t.Fatalf("second update: %v", err)
+	} else if ok {
+		t.Fatal("second update completed an already-complete run")
+	}
 }
 
 func TestReviewGettersMissing(t *testing.T) {
@@ -83,5 +99,8 @@ func TestReviewGettersMissing(t *testing.T) {
 	}
 	if _, ok, err := s.GetLatestReviewRunBySession(ctx, "mer-1"); err != nil || ok {
 		t.Fatalf("missing run: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := s.GetReviewRun(ctx, "run-missing"); err != nil || ok {
+		t.Fatalf("missing run by id: ok=%v err=%v", ok, err)
 	}
 }

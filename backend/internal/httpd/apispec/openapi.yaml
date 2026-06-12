@@ -1705,10 +1705,14 @@ components:
         body:
           description: Review body recorded by AO. Required for changes_requested.
           type: string
+        runId:
+          description: Review run id being completed.
+          type: string
         verdict:
           description: 'Review verdict: approved or changes_requested.'
           type: string
       required:
+      - runId
       - verdict
       - body
       type: object

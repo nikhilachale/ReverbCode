@@ -14,8 +14,12 @@ FROM review WHERE session_id = ?;
 INSERT INTO review_run (id, review_id, session_id, harness, pr_url, status, verdict, iteration, body, created_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
--- name: UpdateReviewRunResult :exec
-UPDATE review_run SET status = ?, verdict = ?, body = ? WHERE id = ?;
+-- name: UpdateReviewRunResult :execrows
+UPDATE review_run SET status = ?, verdict = ?, body = ? WHERE id = ? AND status = 'running';
+
+-- name: GetReviewRun :one
+SELECT id, review_id, session_id, harness, pr_url, status, verdict, iteration, body, created_at
+FROM review_run WHERE id = ?;
 
 -- name: GetLatestReviewRunBySession :one
 SELECT id, review_id, session_id, harness, pr_url, status, verdict, iteration, body, created_at
