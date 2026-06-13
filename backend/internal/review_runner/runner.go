@@ -10,7 +10,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
+	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
 )
 
 // Runner spawns a reviewer over the worker's worktree, resolving the reviewer
@@ -29,10 +29,10 @@ func New(reviewers ports.ReviewerResolver, runtime ports.Runtime) *Runner {
 	return &Runner{reviewers: reviewers, runtime: runtime}
 }
 
-var _ reviewsvc.Runner = (*Runner)(nil)
+var _ reviewcore.Runner = (*Runner)(nil)
 
 // Run launches the reviewer for one review pass.
-func (r *Runner) Run(ctx context.Context, spec reviewsvc.RunSpec) error {
+func (r *Runner) Run(ctx context.Context, spec reviewcore.RunSpec) error {
 	reviewer, ok := r.reviewers.Reviewer(spec.Harness)
 	if !ok {
 		return fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
@@ -60,7 +60,7 @@ func (r *Runner) Run(ctx context.Context, spec reviewsvc.RunSpec) error {
 
 // reviewerEnv merges the adapter's env with AO_REVIEW_WORKER and
 // AO_REVIEW_RUN_ID so `ao review submit` resolves the exact run being completed.
-func reviewerEnv(spec reviewsvc.RunSpec, adapterEnv map[string]string) map[string]string {
+func reviewerEnv(spec reviewcore.RunSpec, adapterEnv map[string]string) map[string]string {
 	env := make(map[string]string, len(adapterEnv)+2)
 	for k, v := range adapterEnv {
 		env[k] = v

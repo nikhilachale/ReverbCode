@@ -16,6 +16,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/reaper"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
 	reviewrunner "github.com/aoagents/agent-orchestrator/backend/internal/review_runner"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
@@ -105,13 +106,14 @@ func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store,
 	if err != nil {
 		return nil, nil, fmt.Errorf("reviewer resolver: %w", err)
 	}
-	reviewSvc := reviewsvc.New(reviewsvc.Deps{
+	reviewEngine := reviewcore.New(reviewcore.Deps{
 		Store:    store,
 		Sessions: store,
 		PRs:      store,
 		Projects: store,
 		Runner:   reviewrunner.New(reviewers, runtime),
 	})
+	reviewSvc := reviewsvc.New(reviewEngine)
 	return sessionSvc, reviewSvc, nil
 }
 

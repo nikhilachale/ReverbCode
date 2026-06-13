@@ -121,7 +121,7 @@ func liveWorker() domain.SessionRecord {
 	}
 }
 
-func newServiceForTest(store Store, sessions Sessions, prs PRs, projects Projects, runner Runner) *Service {
+func newServiceForTest(store Store, sessions Sessions, prs PRs, projects Projects, runner Runner) *Engine {
 	ids := 0
 	return New(Deps{
 		Store: store, Sessions: sessions, PRs: prs, Projects: projects, Runner: runner,

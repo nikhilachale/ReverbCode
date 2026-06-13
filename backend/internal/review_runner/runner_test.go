@@ -7,7 +7,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
+	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
 )
 
 type fakeReviewer struct {
@@ -51,7 +51,7 @@ func TestRunLaunchesResolvedReviewer(t *testing.T) {
 	rt := &fakeRuntime{}
 	r := New(fakeResolver{reviewer: reviewer, ok: true}, rt)
 
-	err := r.Run(context.Background(), reviewsvc.RunSpec{
+	err := r.Run(context.Background(), reviewcore.RunSpec{
 		RunID:         "run-1",
 		WorkerID:      "mer-1",
 		Harness:       domain.ReviewerHarness("greptile"),
@@ -80,7 +80,7 @@ func TestRunLaunchesResolvedReviewer(t *testing.T) {
 
 func TestRunErrorsWhenNoReviewerAdapter(t *testing.T) {
 	r := New(fakeResolver{ok: false}, &fakeRuntime{})
-	err := r.Run(context.Background(), reviewsvc.RunSpec{Harness: "nope", WorkspacePath: "/ws"})
+	err := r.Run(context.Background(), reviewcore.RunSpec{Harness: "nope", WorkspacePath: "/ws"})
 	if err == nil || !strings.Contains(err.Error(), "no reviewer adapter") {
 		t.Fatalf("err = %v, want no-adapter error", err)
 	}
