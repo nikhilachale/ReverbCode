@@ -176,10 +176,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 	branch := cfg.Branch
 	if branch == "" {
-		// A fresh, unique branch per session: gitworktree can't add a worktree on
-		// a branch already checked out elsewhere (e.g. main), so default to one
-		// derived from the assigned session id.
-		branch = "ao/" + string(id)
+		branch = defaultSessionBranch(id, cfg.Kind, sessionPrefix(project))
 	}
 	ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{
 		ProjectID:     cfg.ProjectID,
@@ -216,13 +213,15 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
+	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     string(id),
 		WorkspacePath: ws.Path,
 		Prompt:        prompt,
 		SystemPrompt:  systemPrompt,
 		IssueID:       string(cfg.IssueID),
-		Config:        effectiveAgentConfig(cfg.Kind, project.Config),
+		Config:        agentConfig,
+		Permissions:   agentConfig.Permissions,
 	})
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
@@ -454,9 +453,15 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
+	// The system prompt is derived, not persisted: recompute it so a restored
+	// session keeps its standing instructions across the relaunch.
+	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: system prompt: %w", id, err)
+	}
 	// Restore re-applies the project's resolved agent config so a configured
 	// model/permissions carry across a restore, matching fresh spawn.
-	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, effectiveAgentConfig(rec.Kind, project.Config))
+	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, systemPrompt, effectiveAgentConfig(rec.Kind, project.Config))
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
@@ -575,6 +580,16 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 	}
 }
 
+func defaultSessionBranch(id domain.SessionID, kind domain.SessionKind, prefix string) string {
+	if kind == domain.KindOrchestrator {
+		return "ao/" + prefix + "-orchestrator"
+	}
+	// A fresh, unique branch per worker session: gitworktree can't add a worktree
+	// on a branch already checked out elsewhere (e.g. main), so default to one
+	// derived from the assigned session id.
+	return "ao/" + string(id)
+}
+
 func buildPrompt(cfg ports.SpawnConfig) string {
 	return cfg.Prompt
 }
@@ -582,23 +597,36 @@ func buildPrompt(cfg ports.SpawnConfig) string {
 // buildSpawnTexts returns the user-facing prompt and the system prompt to
 // deliver separately to the agent. Orchestrator role instructions and worker
 // coordination hints are placed in the system prompt so they are treated as
-// standing instructions rather than part of the human's task request.
+// standing instructions rather than part of the human's task request. A
+// promptless spawn delivers no user prompt at all: the agent simply lands at an
+// empty input box rather than receiving an auto-generated kickoff turn.
 func (m *Manager) buildSpawnTexts(ctx context.Context, cfg ports.SpawnConfig) (prompt, systemPrompt string, err error) {
 	prompt = buildPrompt(cfg)
-
-	switch cfg.Kind {
-	case domain.KindOrchestrator:
-		systemPrompt = orchestratorPrompt(cfg.ProjectID)
-	case domain.KindWorker:
-		orchestratorID, ok, lookupErr := m.activeOrchestratorSessionID(ctx, cfg.ProjectID)
-		if lookupErr != nil {
-			return "", "", lookupErr
-		}
-		if ok {
-			systemPrompt = workerOrchestratorPrompt(orchestratorID)
-		}
+	systemPrompt, err = m.buildSystemPrompt(ctx, cfg.Kind, cfg.ProjectID)
+	if err != nil {
+		return "", "", err
 	}
 	return prompt, systemPrompt, nil
+}
+
+// buildSystemPrompt derives the standing instructions for a session of the
+// given kind from current store state. Restore recomputes them through here
+// rather than persisting them, so a restored worker points at the orchestrator
+// that is active now, not the one from its original spawn.
+func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind, projectID domain.ProjectID) (string, error) {
+	switch kind {
+	case domain.KindOrchestrator:
+		return orchestratorPrompt(projectID), nil
+	case domain.KindWorker:
+		orchestratorID, ok, err := m.activeOrchestratorSessionID(ctx, projectID)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return workerOrchestratorPrompt(orchestratorID), nil
+		}
+	}
+	return "", nil
 }
 
 func (m *Manager) activeOrchestratorSessionID(ctx context.Context, project domain.ProjectID) (domain.SessionID, bool, error) {
@@ -817,13 +845,13 @@ func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id do
 // restoreArgv builds the argv to relaunch a torn-down session: the agent's
 // native resume command when it can continue the session, else a fresh launch.
 // The agent signals via ok=false (e.g. no native session id captured yet).
-func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, agentConfig ports.AgentConfig) ([]string, error) {
+func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, systemPrompt string, agentConfig ports.AgentConfig) ([]string, error) {
 	ref := ports.SessionRef{
 		ID:            string(id),
 		WorkspacePath: workspacePath,
 		Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: meta.AgentSessionID},
 	}
-	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, Config: agentConfig})
+	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, SystemPrompt: systemPrompt, Config: agentConfig, Permissions: agentConfig.Permissions})
 	if err != nil {
 		return nil, fmt.Errorf("restore command: %w", err)
 	}
@@ -834,7 +862,9 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 		SessionID:     string(id),
 		WorkspacePath: workspacePath,
 		Prompt:        meta.Prompt,
+		SystemPrompt:  systemPrompt,
 		Config:        agentConfig,
+		Permissions:   agentConfig.Permissions,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("launch command: %w", err)

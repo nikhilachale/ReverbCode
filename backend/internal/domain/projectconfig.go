@@ -107,6 +107,9 @@ func (c ProjectConfig) Validate() error {
 	if err := c.AgentConfig.Validate(); err != nil {
 		return err
 	}
+	if err := validateNameComponent("sessionPrefix", c.SessionPrefix); err != nil {
+		return err
+	}
 	for role, ro := range map[string]RoleOverride{"worker": c.Worker, "orchestrator": c.Orchestrator} {
 		if ro.Harness != "" && !ro.Harness.IsKnown() {
 			return fmt.Errorf("%s.agent: unknown harness %q", role, ro.Harness)
@@ -124,6 +127,17 @@ func (c ProjectConfig) Validate() error {
 		if !rv.Harness.IsKnown() {
 			return fmt.Errorf("reviewers[%d].harness: unknown harness %q", i, rv.Harness)
 		}
+	}
+	return nil
+}
+
+func validateNameComponent(name, value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	if strings.ContainsAny(trimmed, `/\`) || trimmed == "." || trimmed == ".." {
+		return fmt.Errorf("%s: must not contain path separators or traversal components", name)
 	}
 	return nil
 }

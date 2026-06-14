@@ -154,8 +154,9 @@ func (fakeAgents) Agent(domain.AgentHarness) (ports.Agent, bool) { return fakeAg
 // session manager resolved and forwarded a project's agent config.
 type recordingAgent struct {
 	fakeAgent
-	lastConfig ports.AgentConfig
-	lastLaunch ports.LaunchConfig
+	lastConfig  ports.AgentConfig
+	lastLaunch  ports.LaunchConfig
+	lastRestore ports.RestoreConfig
 }
 
 func (a *recordingAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchConfig) ([]string, error) {
@@ -166,6 +167,12 @@ func (a *recordingAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchCon
 
 func (a *recordingAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreConfig) ([]string, bool, error) {
 	a.lastConfig = cfg.Config
+	a.lastRestore = cfg
+	// Mirror real adapters: with no native agent-session id to resume, signal
+	// "cannot restore" so the manager falls back to a fresh launch.
+	if cfg.Session.Metadata[ports.MetadataKeyAgentSessionID] == "" {
+		return nil, false, nil
+	}
 	return []string{"resume"}, true, nil
 }
 
@@ -497,6 +504,57 @@ func TestSpawn_DefaultsBranchFromSessionID(t *testing.T) {
 	}
 }
 
+func TestSpawn_ForwardsResolvedAgentConfigPermissions(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Permissions: domain.PermissionModeAuto},
+		Worker:      domain.RoleOverride{AgentConfig: domain.AgentConfig{Permissions: domain.PermissionModeBypassPermissions}},
+	}}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if agent.lastLaunch.Config.Permissions != domain.PermissionModeBypassPermissions {
+		t.Fatalf("launch config permissions = %q, want bypass", agent.lastLaunch.Config.Permissions)
+	}
+	if agent.lastLaunch.Permissions != domain.PermissionModeBypassPermissions {
+		t.Fatalf("launch permissions = %q, want bypass", agent.lastLaunch.Permissions)
+	}
+}
+
+func TestRestore_ForwardsResolvedAgentConfigPermissions(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Permissions: domain.PermissionModeBypassPermissions},
+	}}
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		IsTerminated: true,
+		Metadata:     domain.SessionMetadata{Branch: "ao/mer-1", WorkspacePath: "/tmp/ws", AgentSessionID: "native-1"},
+	}
+	agent := &recordingAgent{}
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: func(string) (string, error) { return "/bin/true", nil }})
+
+	_, err := m.Restore(ctx, "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if agent.lastRestore.Config.Permissions != domain.PermissionModeBypassPermissions {
+		t.Fatalf("restore config permissions = %q, want bypass", agent.lastRestore.Config.Permissions)
+	}
+	if agent.lastRestore.Permissions != domain.PermissionModeBypassPermissions {
+		t.Fatalf("restore permissions = %q, want bypass", agent.lastRestore.Permissions)
+	}
+}
+
 func TestSpawnWorker_AppendsActiveOrchestratorContact(t *testing.T) {
 	st := newFakeStore()
 	st.num = 1
@@ -580,6 +638,79 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 	}
 	if strings.Contains(agent.lastLaunch.Prompt, "You are the human-facing coordinator") {
 		t.Fatalf("coordinator role must not be in the user prompt:\n%s", agent.lastLaunch.Prompt)
+	}
+
+	// A promptless orchestrator gets no auto-generated kickoff turn: spawning
+	// must deliver nothing to the agent, leaving it idle at an empty input box.
+	if agent.lastLaunch.Prompt != "" {
+		t.Fatalf("prompt = %q, want empty (no kickoff turn)", agent.lastLaunch.Prompt)
+	}
+}
+
+// TestRestore_OrchestratorRederivesSystemPrompt: the system prompt is derived,
+// not persisted, so a restored orchestrator must get its role instructions
+// recomputed and handed to the agent's native resume command.
+func TestRestore_OrchestratorRederivesSystemPrompt(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"},
+	}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(agent.lastRestore.SystemPrompt, "You are the human-facing coordinator for project mer") {
+		t.Fatalf("restore system prompt missing coordinator role:\n%s", agent.lastRestore.SystemPrompt)
+	}
+}
+
+// TestRestore_FallbackLaunchCarriesSystemPrompt: when the agent has no native
+// session to resume, the fresh-launch fallback must carry the re-derived
+// system prompt alongside the persisted task prompt.
+func TestRestore_FallbackLaunchCarriesSystemPrompt(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", Prompt: "kick off"},
+	}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(agent.lastLaunch.SystemPrompt, "You are the human-facing coordinator for project mer") {
+		t.Fatalf("fallback launch system prompt missing coordinator role:\n%s", agent.lastLaunch.SystemPrompt)
+	}
+	if agent.lastLaunch.Prompt != "kick off" {
+		t.Fatalf("fallback launch prompt = %q, want persisted task prompt", agent.lastLaunch.Prompt)
+	}
+}
+
+// TestRestore_WorkerPointsAtCurrentOrchestrator: a restored worker's
+// coordination hint must reference the orchestrator active at restore time,
+// not the one from its original spawn.
+func TestRestore_WorkerPointsAtCurrentOrchestrator(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-9"] = domain.SessionRecord{ID: "mer-9", ProjectID: "mer", Kind: domain.KindOrchestrator}
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"},
+	}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(agent.lastRestore.SystemPrompt, `ao send --session mer-9`) {
+		t.Fatalf("restore system prompt missing current orchestrator contact:\n%s", agent.lastRestore.SystemPrompt)
 	}
 }
 
