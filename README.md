@@ -19,9 +19,11 @@ and [`AGENTS.md`](AGENTS.md) for the contributor / worker contract.
   (`backend/internal/observe/scm/`): polling loop, ETag guards, semantic
   diffing, CI/check/review-thread tracking, and lifecycle nudges for CI
   failures, review feedback, and merge conflicts.
-- Agent adapters under `backend/internal/adapters/agent/`: `claude-code`,
-  `codex`, `opencode`, `grok`, `cursor`, `qwen`, `copilot`, `kimi`, plus
-  shared activity-dispatch / hook utilities.
+- A 20+ agent adapter platform under `backend/internal/adapters/agent/`
+  (`claude-code`, `codex`, `cursor`, `opencode`, `aider`, `amp`, `goose`,
+  `copilot`, `grok`, `qwen`, `kimi`, `crush`, `cline`, `droid`, and more),
+  registered through a shared registry with common activity-dispatch / hook
+  utilities.
 - SQLite store (`backend/internal/storage/sqlite/`) with sqlc-generated
   queries, DB-triggered change-data-capture into `change_log`, and a CDC
   poller/broadcaster (`backend/internal/cdc/`) feeding in-process subscribers
@@ -56,6 +58,24 @@ go build -o /tmp/ao ./cmd/ao
 /tmp/ao session ls
 ```
 
+### Electron app (dev)
+
+The desktop supervisor lives under `frontend/` and is started separately:
+
+```bash
+cd frontend
+npm install
+npm run dev   # electron-forge start
+```
+
+Heads-up: `npm run dev` does **not** start the daemon for you. Start it first
+(`ao start`, see above) — the renderer attaches to the running daemon over
+loopback (`127.0.0.1:3001` by default, the `AO_PORT` from the table below).
+Without a daemon the app opens but shows its daemon-not-ready state.
+
+For renderer-only UI work without the Electron shell, use
+`npm run dev:web` (Vite in a regular browser).
+
 ## CLI surface
 
 The CLI is intentionally thin: every product command resolves to a daemon HTTP
@@ -71,6 +91,7 @@ below groups what's on `main` today.
 | Project      | `ao project add`                     | Register a local git repo as a project.                      |
 | Project      | `ao project ls`                      | List registered projects.                                    |
 | Project      | `ao project get <id>`                | Fetch one project.                                           |
+| Project      | `ao project set-config <id>`         | Update per-project config.                                   |
 | Project      | `ao project rm <id>`                 | Remove a project.                                            |
 | Session      | `ao spawn`                           | Spawn a worker session in a registered project.              |
 | Session      | `ao session ls`                      | List sessions (filter by project, include terminated).       |
@@ -147,8 +168,10 @@ Current `main` ships the CLI surface above, the SCM observer end-to-end
 adapter platform, and the CDC pipeline with SSE replay. The Tracker observer
 ([#112](https://github.com/aoagents/agent-orchestrator/issues/112)) and live
 `pr_*` event consumers ([#110](https://github.com/aoagents/agent-orchestrator/issues/110))
-are in flight. The Electron supervisor under `frontend/` is still a placeholder
-shell — daemon logic stays in the Go backend.
+are in flight. The Electron + React supervisor under `frontend/` is real and
+wired to the daemon over the generated typed client (projects/sessions board,
+session view, terminal pane, pull-requests page); all daemon logic stays in the
+Go backend.
 
 Tracking milestone:
 [`rewrite`](https://github.com/aoagents/agent-orchestrator/milestone/1) on GitHub.

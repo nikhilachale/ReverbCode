@@ -59,6 +59,7 @@ Current examples:
 internal/service/project
 internal/service/session
 internal/service/pr
+internal/service/review
 ```
 
 Belongs here:
@@ -237,15 +238,16 @@ Does not belong here:
 
 ### `internal/terminal`
 
-`terminal` owns the terminal session protocol and PTY/session management used by
-the HTTP mux.
+`terminal` owns the terminal session protocol and PTY attach management used by
+the HTTP mux. Every client that opens a pane gets its own `zellij attach` PTY —
+zellij owns screen state and scrollback and replays its init handshake + full
+repaint per attach, so there is no shared per-pane buffer.
 
 Belongs here:
 
-- terminal session lifecycle;
+- per-client attachment lifecycle (liveness gating, re-attach backoff);
 - input/output framing independent of HTTP;
-- PTY-backed session handling;
-- ring buffers and terminal protocol tests.
+- PTY-backed attach handling and terminal protocol tests.
 
 `httpd` adapts WebSocket connections to terminal interfaces; `terminal` should
 not import `httpd`.
@@ -332,9 +334,11 @@ backend/
     project/                    # project API/use-case boundary
     session/                    # session API/use-case boundary
     pr/                         # PR observation/action service
+    review/                     # code-review API/use-case boundary
   internal/session_manager/     # internal session command engine
   internal/lifecycle/           # durable lifecycle fact reducer
-  internal/observe/reaper/      # runtime observation loop
+  internal/observe/scm/         # SCM (GitHub) observer loop
+  internal/observe/reaper/      # runtime liveness observation loop
   internal/storage/sqlite/      # DB, migrations, queries, generated sqlc, stores
   internal/cdc/                 # change_log poller and broadcaster
   internal/terminal/            # terminal session protocol and PTY handling
