@@ -201,8 +201,11 @@ type restListPull struct {
 	Draft   bool   `json:"draft"`
 	Title   string `json:"title"`
 	Head    struct {
-		Ref string `json:"ref"`
-		SHA string `json:"sha"`
+		Ref  string `json:"ref"`
+		SHA  string `json:"sha"`
+		Repo struct {
+			FullName string `json:"full_name"`
+		} `json:"repo"`
 	} `json:"head"`
 	Base struct {
 		Ref string `json:"ref"`
@@ -224,6 +227,7 @@ func restListPullToSCM(pull restListPull) ports.SCMPRObservation {
 		Draft:             pull.Draft,
 		Closed:            closed,
 		SourceBranch:      pull.Head.Ref,
+		HeadRepo:          pull.Head.Repo.FullName,
 		TargetBranch:      pull.Base.Ref,
 		HeadSHA:           pull.Head.SHA,
 		Title:             pull.Title,

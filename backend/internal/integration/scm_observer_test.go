@@ -274,7 +274,7 @@ func TestSCMObserverEndToEnd(t *testing.T) {
 			logTail = "setup\nsetup\nFAILED: build broke\n"
 		)
 		f.provider.detected["feat/x"] = ports.SCMPRObservation{
-			URL: prURL, Number: 42, SourceBranch: "feat/x", TargetBranch: "main", HeadSHA: headSHA,
+			URL: prURL, Number: 42, SourceBranch: "feat/x", HeadRepo: scmTestRepo.Repo, TargetBranch: "main", HeadSHA: headSHA,
 		}
 		f.provider.observations[42] = failingSCMObservation(prURL, 42, headSHA, logTail)
 
@@ -374,7 +374,7 @@ func TestSCMObserverEndToEnd(t *testing.T) {
 			headSHA = "cafef00d"
 		)
 		f.provider.detected["feat/x"] = ports.SCMPRObservation{
-			URL: prURL, Number: 77, SourceBranch: "feat/x", TargetBranch: "main", HeadSHA: headSHA, Merged: true,
+			URL: prURL, Number: 77, SourceBranch: "feat/x", HeadRepo: scmTestRepo.Repo, TargetBranch: "main", HeadSHA: headSHA, Merged: true,
 		}
 		f.provider.observations[77] = mergedSCMObservation(prURL, 77, headSHA)
 
@@ -463,7 +463,7 @@ func mergedSCMObservationBranches(prURL string, num int, headSHA, src, tgt strin
 // listed PR to a session by source-branch prefix, so only identity + branches
 // matter here.
 func detectedPR(prURL string, num int, src, tgt, headSHA string) ports.SCMPRObservation {
-	return ports.SCMPRObservation{URL: prURL, HTMLURL: prURL, Number: num, SourceBranch: src, TargetBranch: tgt, HeadSHA: headSHA}
+	return ports.SCMPRObservation{URL: prURL, HTMLURL: prURL, Number: num, SourceBranch: src, HeadRepo: scmTestRepo.Repo, TargetBranch: tgt, HeadSHA: headSHA}
 }
 
 // TestSCMObserverMultiPREndToEnd is the functional regression guard for the

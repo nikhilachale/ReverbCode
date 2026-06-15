@@ -550,6 +550,15 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 			if pr.Number <= 0 || pr.SourceBranch == "" {
 				continue
 			}
+			// Branch-prefix attribution must only claim PRs whose head branch
+			// lives in the project repo. A fork PR can carry a head branch whose
+			// name matches an AO session branch; its commits live in the fork, so
+			// auto-claiming it would misattribute work. Same-repo PRs always
+			// report the base repo's full name as their head repo, so anything
+			// else (including an empty head repo from a deleted fork) is skipped.
+			if !strings.EqualFold(pr.HeadRepo, repoFullName(repo)) {
+				continue
+			}
 			key := prKey(repo, pr.Number)
 			if _, ok := subjects[key]; ok {
 				continue
@@ -558,23 +567,38 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 			if !ok {
 				continue
 			}
+			known := domain.PullRequest{
+				URL:          firstNonEmpty(pr.URL, pr.HTMLURL),
+				SessionID:    sr.session.ID,
+				Number:       pr.Number,
+				Draft:        pr.Draft,
+				SourceBranch: pr.SourceBranch,
+				TargetBranch: pr.TargetBranch,
+				HeadSHA:      pr.HeadSHA,
+				Provider:     repo.Provider,
+				Host:         repo.Host,
+				Repo:         repoFullName(repo),
+				UpdatedAt:    now,
+			}
+			// Persist the discovered PR as an open baseline row immediately, before
+			// the refresh/lifecycle pass runs. A session can own several PRs, and a
+			// terminal observation for one of them triggers a completion check that
+			// reads every PR of the session from the store. Without this write, an
+			// open sibling/child discovered in the same poll would not yet be
+			// durable, and the session could terminate while that PR is still open.
+			if err := o.store.WriteSCMObservation(ctx, known, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+				o.logger.Error("scm observer: persist discovered PR failed", "session", sr.session.ID, "pr", known.URL, "err", err)
+				if markRepoFailed != nil {
+					markRepoFailed(repo)
+				}
+				continue
+			}
 			subjects[key] = &subject{
 				session: sr.session,
 				repo:    repo,
 				branch:  sr.branch,
-				known: domain.PullRequest{
-					URL:          firstNonEmpty(pr.URL, pr.HTMLURL),
-					SessionID:    sr.session.ID,
-					Number:       pr.Number,
-					SourceBranch: pr.SourceBranch,
-					TargetBranch: pr.TargetBranch,
-					HeadSHA:      pr.HeadSHA,
-					Provider:     repo.Provider,
-					Host:         repo.Host,
-					Repo:         repoFullName(repo),
-					UpdatedAt:    now,
-				},
-				hasPR: true,
+				known:   known,
+				hasPR:   true,
 			}
 		}
 	}

@@ -435,7 +435,7 @@ func TestPoll_RepoETag200DiscoversPRAndRefreshesSamePoll(t *testing.T) {
 	store := testStoreWithSession()
 	provider := &fakeProvider{
 		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "v2"}},
-		openPRs:      map[string][]ports.SCMPRObservation{prKey(testRepo, 0): {{URL: "https://github.com/o/r/pull/1", Number: 1, SourceBranch: "feat", TargetBranch: "main", HeadSHA: "sha1"}}},
+		openPRs:      map[string][]ports.SCMPRObservation{prKey(testRepo, 0): {{URL: "https://github.com/o/r/pull/1", Number: 1, SourceBranch: "feat", HeadRepo: "o/r", TargetBranch: "main", HeadSHA: "sha1"}}},
 		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): testObs(1)},
 	}
 	lc := &fakeLifecycle{}
@@ -464,8 +464,8 @@ func TestPoll_DiscoversStackedChildByBranchPrefix(t *testing.T) {
 	provider := &fakeProvider{
 		repoGuards: map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "v2"}},
 		openPRs: map[string][]ports.SCMPRObservation{prKey(testRepo, 0): {
-			{URL: "https://github.com/o/r/pull/1", Number: 1, SourceBranch: "feat", TargetBranch: "main", HeadSHA: "sha1"},
-			{URL: "https://github.com/o/r/pull/2", Number: 2, SourceBranch: "feat/child", TargetBranch: "feat", HeadSHA: "sha2"},
+			{URL: "https://github.com/o/r/pull/1", Number: 1, SourceBranch: "feat", HeadRepo: "o/r", TargetBranch: "main", HeadSHA: "sha1"},
+			{URL: "https://github.com/o/r/pull/2", Number: 2, SourceBranch: "feat/child", HeadRepo: "o/r", TargetBranch: "feat", HeadSHA: "sha2"},
 		}},
 		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): testObs(1), prKey(testRepo, 2): childObs},
 	}
@@ -482,6 +482,59 @@ func TestPoll_DiscoversStackedChildByBranchPrefix(t *testing.T) {
 	}
 	if !fetched[1] || !fetched[2] {
 		t.Fatalf("expected both root and stacked child fetched, got %#v", fetched)
+	}
+}
+
+// A PR whose head branch matches a session branch but lives in a fork (its head
+// repo differs from the project repo) must not be auto-attributed: its commits
+// are not the session's work. It is neither fetched nor persisted.
+func TestPoll_IgnoresForkPRWithMatchingBranch(t *testing.T) {
+	store := testStoreWithSession()
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "v2"}},
+		openPRs:      map[string][]ports.SCMPRObservation{prKey(testRepo, 0): {{URL: "https://github.com/forker/r/pull/1", Number: 1, SourceBranch: "feat", HeadRepo: "forker/r", TargetBranch: "main", HeadSHA: "sha1"}}},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): testObs(1)},
+	}
+	obs := newTestObserver(store, provider, &fakeLifecycle{}, time.Unix(1, 0).UTC())
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.fetchBatches) != 0 {
+		t.Fatalf("fork PR must not be fetched, got %#v", provider.fetchBatches)
+	}
+	if len(store.writes) != 0 {
+		t.Fatalf("fork PR must not be persisted, got %d writes", len(store.writes))
+	}
+}
+
+// A newly discovered open PR is persisted as a baseline row during discovery,
+// before the refresh/lifecycle pass. This is what lets a same-poll terminal
+// observation for a sibling PR see the open PR in the store and avoid completing
+// the session prematurely. The persist holds even when the refresh fetch yields
+// no observation for the new PR.
+func TestPoll_DiscoveredPRPersistedAsBaselineBeforeRefresh(t *testing.T) {
+	store := testStoreWithSession()
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "v2"}},
+		openPRs:      map[string][]ports.SCMPRObservation{prKey(testRepo, 0): {{URL: "https://github.com/o/r/pull/1", Number: 1, SourceBranch: "feat", HeadRepo: "o/r", TargetBranch: "main", HeadSHA: "sha1"}}},
+		observations: map[string]ports.SCMObservation{}, // refresh returns nothing
+	}
+	obs := newTestObserver(store, provider, &fakeLifecycle{}, time.Unix(1, 0).UTC())
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var baseline *domain.PullRequest
+	for i := range store.writes {
+		if store.writes[i].pr.Number == 1 {
+			baseline = &store.writes[i].pr
+			break
+		}
+	}
+	if baseline == nil {
+		t.Fatalf("discovered PR #1 not persisted as a baseline row; writes=%#v", store.writes)
+	}
+	if baseline.Merged || baseline.Closed {
+		t.Fatalf("baseline row must be open, got merged=%v closed=%v", baseline.Merged, baseline.Closed)
 	}
 }
 
