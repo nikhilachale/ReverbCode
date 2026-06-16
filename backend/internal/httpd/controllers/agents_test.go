@@ -27,9 +27,10 @@ func TestListAgents(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{
 		Agents: fakeAgentCatalog{inventory: agentsvc.Inventory{
-			Supported: []agentsvc.Info{{ID: "claude-code", Label: "Claude Code"}, {ID: "codex", Label: "Codex"}},
-			Installed: []agentsvc.Info{{ID: "codex", Label: "Codex"}},
-			Counts:    agentsvc.Counts{Supported: 2, Installed: 1},
+			Supported:  []agentsvc.Info{{ID: "claude-code", Label: "Claude Code"}, {ID: "codex", Label: "Codex"}},
+			Installed:  []agentsvc.Info{{ID: "codex", Label: "Codex"}},
+			Authorized: []agentsvc.Info{{ID: "codex", Label: "Codex"}},
+			Counts:     agentsvc.Counts{Supported: 2, Installed: 1, Authorized: 1},
 		}},
 	}, httpd.ControlDeps{}))
 	defer srv.Close()
@@ -38,7 +39,7 @@ func TestListAgents(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("GET /agents = %d, body=%s", status, body)
 	}
-	for _, want := range []string{`"supported"`, `"installed"`, `"supported":2`, `"installed":1`, `"id":"codex"`} {
+	for _, want := range []string{`"supported"`, `"installed"`, `"authorized"`, `"supported":2`, `"installed":1`, `"authorized":1`, `"id":"codex"`} {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("body missing %s: %s", want, body)
 		}

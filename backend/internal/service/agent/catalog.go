@@ -11,21 +11,24 @@ import (
 
 // Info is the user-facing identity for an agent adapter.
 type Info struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
+	ID         string                `json:"id"`
+	Label      string                `json:"label"`
+	AuthStatus ports.AgentAuthStatus `json:"authStatus,omitempty" enum:"authorized,unauthorized,unknown"`
 }
 
 // Counts summarizes the local agent inventory.
 type Counts struct {
-	Supported int `json:"supported"`
-	Installed int `json:"installed"`
+	Supported  int `json:"supported"`
+	Installed  int `json:"installed"`
+	Authorized int `json:"authorized"`
 }
 
 // Inventory describes all daemon-supported agents and which are runnable here.
 type Inventory struct {
-	Supported []Info `json:"supported"`
-	Installed []Info `json:"installed"`
-	Counts    Counts `json:"counts"`
+	Supported  []Info `json:"supported"`
+	Installed  []Info `json:"installed"`
+	Authorized []Info `json:"authorized"`
+	Counts     Counts `json:"counts"`
 }
 
 // Service reports supported and locally runnable agent adapters.
@@ -51,6 +54,7 @@ func NewWithAgents(agents []agentregistry.HarnessAgent) *Service {
 func (s *Service) List(ctx context.Context) (Inventory, error) {
 	supported := make([]Info, 0, len(s.agents))
 	installed := make([]Info, 0, len(s.agents))
+	authorized := make([]Info, 0, len(s.agents))
 	for _, item := range s.agents {
 		if err := ctx.Err(); err != nil {
 			return Inventory{}, err
@@ -61,7 +65,11 @@ func (s *Service) List(ctx context.Context) (Inventory, error) {
 		}
 		supported = append(supported, info)
 		if _, err := item.Agent.GetLaunchCommand(ctx, ports.LaunchConfig{}); err == nil {
+			info.AuthStatus = authStatus(ctx, item.Agent)
 			installed = append(installed, info)
+			if info.AuthStatus == ports.AgentAuthStatusAuthorized {
+				authorized = append(authorized, info)
+			}
 		} else if errors.Is(err, ports.ErrAgentBinaryNotFound) {
 			continue
 		} else {
@@ -71,14 +79,37 @@ func (s *Service) List(ctx context.Context) (Inventory, error) {
 
 	sortInfos(supported)
 	sortInfos(installed)
+	sortInfos(authorized)
 	return Inventory{
-		Supported: supported,
-		Installed: installed,
+		Supported:  supported,
+		Installed:  installed,
+		Authorized: authorized,
 		Counts: Counts{
-			Supported: len(supported),
-			Installed: len(installed),
+			Supported:  len(supported),
+			Installed:  len(installed),
+			Authorized: len(authorized),
 		},
 	}, nil
+}
+
+func authStatus(ctx context.Context, a ports.Agent) ports.AgentAuthStatus {
+	checker, ok := a.(ports.AgentAuthChecker)
+	if !ok {
+		return ports.AgentAuthStatusUnknown
+	}
+	status, err := checker.AuthStatus(ctx)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return ports.AgentAuthStatusUnknown
+		}
+		return ports.AgentAuthStatusUnknown
+	}
+	switch status {
+	case ports.AgentAuthStatusAuthorized, ports.AgentAuthStatusUnauthorized:
+		return status
+	default:
+		return ports.AgentAuthStatusUnknown
+	}
 }
 
 func sortInfos(infos []Info) {

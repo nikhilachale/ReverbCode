@@ -1222,6 +1222,8 @@ components:
       type: object
     AgentCounts:
       properties:
+        authorized:
+          type: integer
         installed:
           type: integer
         supported:
@@ -1229,9 +1231,16 @@ components:
       required:
       - supported
       - installed
+      - authorized
       type: object
     AgentInfo:
       properties:
+        authStatus:
+          enum:
+          - authorized
+          - unauthorized
+          - unknown
+          type: string
         id:
           type: string
         label:
@@ -1353,6 +1362,10 @@ components:
       type: object
     ListAgentsResponse:
       properties:
+        authorized:
+          items:
+            $ref: '#/components/schemas/AgentInfo'
+          type: array
         counts:
           $ref: '#/components/schemas/AgentCounts'
         installed:
@@ -1366,6 +1379,7 @@ components:
       required:
       - supported
       - installed
+      - authorized
       - counts
       type: object
     ListNotificationsResponse:

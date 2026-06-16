@@ -15,6 +15,12 @@ type fakeAgent struct {
 	err error
 }
 
+type fakeAuthAgent struct {
+	fakeAgent
+	status  ports.AgentAuthStatus
+	authErr error
+}
+
 func (f fakeAgent) GetConfigSpec(context.Context) (ports.ConfigSpec, error) {
 	return ports.ConfigSpec{}, nil
 }
@@ -42,6 +48,10 @@ func (f fakeAgent) SessionInfo(context.Context, ports.SessionRef) (ports.Session
 	return ports.SessionInfo{}, false, nil
 }
 
+func (f fakeAuthAgent) AuthStatus(context.Context) (ports.AgentAuthStatus, error) {
+	return f.status, f.authErr
+}
+
 func TestListCountsInstalledAgentsAndIgnoresDetectorErrors(t *testing.T) {
 	svc := NewWithAgents([]agentregistry.HarnessAgent{
 		harnessAgent("codex", "Codex", nil),
@@ -61,6 +71,43 @@ func TestListCountsInstalledAgentsAndIgnoresDetectorErrors(t *testing.T) {
 	}
 }
 
+func TestListReportsAuthorizedInstalledAgents(t *testing.T) {
+	svc := NewWithAgents([]agentregistry.HarnessAgent{
+		harnessAuthAgent("codex", "Codex", ports.AgentAuthStatusAuthorized, nil),
+		harnessAuthAgent("claude-code", "Claude Code", ports.AgentAuthStatusUnauthorized, nil),
+		harnessAgent("opencode", "OpenCode", nil),
+		harnessAuthAgent("broken-auth", "Broken Auth", ports.AgentAuthStatusAuthorized, errors.New("probe failed")),
+	})
+
+	got, err := svc.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if got.Counts.Supported != 4 || got.Counts.Installed != 4 || got.Counts.Authorized != 1 {
+		t.Fatalf("counts = %#v, want supported=4 installed=4 authorized=1", got.Counts)
+	}
+	if len(got.Authorized) != 1 || got.Authorized[0].ID != "codex" {
+		t.Fatalf("authorized = %#v, want only codex", got.Authorized)
+	}
+
+	byID := map[string]Info{}
+	for _, info := range got.Installed {
+		byID[info.ID] = info
+	}
+	if byID["codex"].AuthStatus != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("codex authStatus = %q", byID["codex"].AuthStatus)
+	}
+	if byID["claude-code"].AuthStatus != ports.AgentAuthStatusUnauthorized {
+		t.Fatalf("claude-code authStatus = %q", byID["claude-code"].AuthStatus)
+	}
+	if byID["opencode"].AuthStatus != ports.AgentAuthStatusUnknown {
+		t.Fatalf("opencode authStatus = %q", byID["opencode"].AuthStatus)
+	}
+	if byID["broken-auth"].AuthStatus != ports.AgentAuthStatusUnknown {
+		t.Fatalf("broken-auth authStatus = %q", byID["broken-auth"].AuthStatus)
+	}
+}
+
 func harnessAgent(id, label string, err error) agentregistry.HarnessAgent {
 	return agentregistry.HarnessAgent{
 		Harness: domain.AgentHarness(id),
@@ -69,5 +116,16 @@ func harnessAgent(id, label string, err error) agentregistry.HarnessAgent {
 			Name: label,
 		},
 		Agent: fakeAgent{err: err},
+	}
+}
+
+func harnessAuthAgent(id, label string, status ports.AgentAuthStatus, err error) agentregistry.HarnessAgent {
+	return agentregistry.HarnessAgent{
+		Harness: domain.AgentHarness(id),
+		Manifest: adapters.Manifest{
+			ID:   id,
+			Name: label,
+		},
+		Agent: fakeAuthAgent{fakeAgent: fakeAgent{}, status: status, authErr: err},
 	}
 }

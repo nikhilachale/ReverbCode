@@ -100,7 +100,13 @@ describe("ProjectSettingsForm", () => {
 				{ id: "goose", label: "Goose" },
 				{ id: "opencode", label: "OpenCode" },
 			],
-			counts: { supported: 4, installed: 4 },
+			authorized: [
+				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
+				{ id: "codex", label: "Codex", authStatus: "authorized" },
+				{ id: "goose", label: "Goose", authStatus: "authorized" },
+				{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
+			],
+			counts: { supported: 4, installed: 4, authorized: 4 },
 		});
 		mockGetResponses();
 
@@ -108,6 +114,7 @@ describe("ProjectSettingsForm", () => {
 
 		expect(await screen.findByText("git@github.com:acme/project-one.git")).toBeInTheDocument();
 		expect(screen.getByText("4 of 4 supported agents installed on this machine.")).toBeInTheDocument();
+		expect(screen.getByText(/4 installed agents authorized/)).toBeInTheDocument();
 		expect(screen.getByLabelText("Default branch")).toHaveValue("develop");
 		expect(screen.getByLabelText("Session prefix")).toHaveValue("po");
 		expect(screen.getByLabelText("Model override")).toHaveValue("claude-opus-4-5");
@@ -176,7 +183,8 @@ describe("ProjectSettingsForm", () => {
 		mockAgents({
 			supported: [{ id: "codex", label: "Codex" }],
 			installed: [{ id: "codex", label: "Codex" }],
-			counts: { supported: 1, installed: 1 },
+			authorized: [{ id: "codex", label: "Codex", authStatus: "authorized" }],
+			counts: { supported: 1, installed: 1, authorized: 1 },
 		});
 		mockGetResponses();
 
@@ -212,7 +220,11 @@ describe("ProjectSettingsForm", () => {
 				{ id: "claude-code", label: "Claude Code" },
 				{ id: "codex", label: "Codex" },
 			],
-			counts: { supported: 2, installed: 2 },
+			authorized: [
+				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
+				{ id: "codex", label: "Codex", authStatus: "authorized" },
+			],
+			counts: { supported: 2, installed: 2, authorized: 2 },
 		});
 		mockOrchestrators([
 			{
@@ -258,7 +270,11 @@ describe("ProjectSettingsForm", () => {
 				{ id: "claude-code", label: "Claude Code" },
 				{ id: "codex", label: "Codex" },
 			],
-			counts: { supported: 2, installed: 2 },
+			authorized: [
+				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
+				{ id: "codex", label: "Codex", authStatus: "authorized" },
+			],
+			counts: { supported: 2, installed: 2, authorized: 2 },
 		});
 		mockOrchestrators([
 			{
@@ -302,7 +318,8 @@ describe("ProjectSettingsForm", () => {
 				{ id: "codex", label: "Codex" },
 			],
 			installed: [{ id: "codex", label: "Codex" }],
-			counts: { supported: 2, installed: 1 },
+			authorized: [{ id: "codex", label: "Codex", authStatus: "authorized" }],
+			counts: { supported: 2, installed: 1, authorized: 1 },
 		});
 		mockGetResponses();
 
@@ -311,10 +328,10 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByText("Aider is configured but was not detected on this machine.")).toBeInTheDocument();
 		expect(screen.getByRole("combobox", { name: "Default worker agent" })).toHaveTextContent("Aider");
 		await userEvent.click(screen.getByRole("combobox", { name: "Default orchestrator agent" }));
-		expect(screen.queryByRole("option", { name: "Aider" })).not.toBeInTheDocument();
+		expect(screen.getByRole("option", { name: /Aider.*Needs install/i })).toHaveAttribute("aria-disabled", "true");
 	});
 
-	it("disables agent dropdowns when no supported agents are installed", async () => {
+	it("shows unavailable agents instead of disabling the dropdowns", async () => {
 		mockProject({
 			id: "proj-1",
 			name: "Project One",
@@ -326,15 +343,128 @@ describe("ProjectSettingsForm", () => {
 		mockAgents({
 			supported: [{ id: "codex", label: "Codex" }],
 			installed: [],
-			counts: { supported: 1, installed: 0 },
+			authorized: [],
+			counts: { supported: 1, installed: 0, authorized: 0 },
 		});
 		mockGetResponses();
 
 		renderSettings();
 
-		expect(await screen.findByText("No supported agent runtime was detected.")).toBeInTheDocument();
-		expect(screen.getByRole("combobox", { name: "Default worker agent" })).toBeDisabled();
-		expect(screen.getByRole("combobox", { name: "Default orchestrator agent" })).toBeDisabled();
+		expect(await screen.findByText("No authorized supported agent runtime was detected.")).toBeInTheDocument();
+		const workerAgent = screen.getByRole("combobox", { name: "Default worker agent" });
+		const orchestratorAgent = screen.getByRole("combobox", { name: "Default orchestrator agent" });
+		expect(workerAgent).not.toBeDisabled();
+		expect(orchestratorAgent).not.toBeDisabled();
+		await userEvent.click(workerAgent);
+		expect(screen.getByRole("option", { name: /Codex.*Needs install/i })).toHaveAttribute("aria-disabled", "true");
+	});
+
+	it("keeps a configured but unauthorized agent visible with a warning", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "claude-code" },
+				orchestrator: { agent: "codex" },
+			},
+		});
+		mockAgents({
+			supported: [
+				{ id: "claude-code", label: "Claude Code" },
+				{ id: "codex", label: "Codex" },
+			],
+			installed: [
+				{ id: "claude-code", label: "Claude Code", authStatus: "unauthorized" },
+				{ id: "codex", label: "Codex", authStatus: "authorized" },
+			],
+			authorized: [{ id: "codex", label: "Codex", authStatus: "authorized" }],
+			counts: { supported: 2, installed: 2, authorized: 1 },
+		});
+		mockGetResponses();
+
+		renderSettings();
+
+		expect(await screen.findByText("Claude Code is configured but is not authorized on this machine.")).toBeInTheDocument();
+		expect(screen.getByRole("combobox", { name: "Default worker agent" })).toHaveTextContent("Claude Code");
+		await userEvent.click(screen.getByRole("combobox", { name: "Default orchestrator agent" }));
+		expect(screen.getByRole("option", { name: /Claude Code.*Needs auth/i })).toHaveAttribute("aria-disabled", "true");
+	});
+
+	it("sorts agent options by authorized, installed, then not installed", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+		});
+		mockAgents({
+			supported: [
+				{ id: "z-missing", label: "Z Missing" },
+				{ id: "b-auth", label: "B Authorized", authStatus: "authorized" },
+				{ id: "a-auth", label: "A Authorized", authStatus: "authorized" },
+				{ id: "installed", label: "Installed Only", authStatus: "unauthorized" },
+			],
+			installed: [
+				{ id: "b-auth", label: "B Authorized", authStatus: "authorized" },
+				{ id: "a-auth", label: "A Authorized", authStatus: "authorized" },
+				{ id: "installed", label: "Installed Only", authStatus: "unauthorized" },
+			],
+			authorized: [
+				{ id: "b-auth", label: "B Authorized", authStatus: "authorized" },
+				{ id: "a-auth", label: "A Authorized", authStatus: "authorized" },
+			],
+			counts: { supported: 4, installed: 3, authorized: 2 },
+		});
+		mockGetResponses();
+
+		renderSettings();
+
+		await userEvent.click(await screen.findByRole("combobox", { name: "Default worker agent" }));
+		const options = screen.getAllByRole("option").map((option) => option.textContent);
+		expect(options).toEqual([
+			"Daemon default",
+			"A Authorized",
+			"B Authorized",
+			"Installed OnlyNeeds auth",
+			"Z MissingNeeds install",
+		]);
+	});
+
+	it("prompts for login when installed agents have no authorized status", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+		});
+		mockAgents({
+			supported: [
+				{ id: "codex", label: "Codex" },
+				{ id: "aider", label: "Aider" },
+			],
+			installed: [{ id: "codex", label: "Codex" }],
+			counts: { supported: 2, installed: 1 },
+		});
+		mockGetResponses();
+
+		renderSettings();
+
+		expect(await screen.findByRole("dialog", { name: "Agent login needed" })).toBeInTheDocument();
+		expect(screen.getByText(/Log in to one of/)).toHaveTextContent("Log in to one of Codex, then reload settings.");
+		await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+
+		const workerAgent = await screen.findByRole("combobox", { name: "Default worker agent" });
+		await userEvent.click(workerAgent);
+		expect(screen.getByRole("option", { name: /Codex.*Needs auth/i })).toHaveAttribute("aria-disabled", "true");
+		expect(screen.getByRole("option", { name: /Aider.*Needs install/i })).toHaveAttribute("aria-disabled", "true");
 	});
 
 	it("shows the daemon validation message when save fails", async () => {
@@ -349,7 +479,8 @@ describe("ProjectSettingsForm", () => {
 		mockAgents({
 			supported: [{ id: "codex", label: "Codex" }],
 			installed: [{ id: "codex", label: "Codex" }],
-			counts: { supported: 1, installed: 1 },
+			authorized: [{ id: "codex", label: "Codex", authStatus: "authorized" }],
+			counts: { supported: 1, installed: 1, authorized: 1 },
 		});
 		mockGetResponses();
 		putMock.mockResolvedValue({

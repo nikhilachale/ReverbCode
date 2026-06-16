@@ -13,6 +13,10 @@ type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type AgentInfo = components["schemas"]["AgentInfo"];
 type AgentCatalog = components["schemas"]["ListAgentsResponse"];
+type AgentCatalogWithAuth = AgentCatalog & {
+	authorized?: AgentInfo[];
+	counts: AgentCatalog["counts"] & { authorized?: number };
+};
 type Session = components["schemas"]["Session"];
 
 const PERMISSION_MODE_OPTIONS = [
@@ -92,9 +96,12 @@ function SettingsBody({
 }) {
 	const queryClient = useQueryClient();
 	const config = project.config ?? {};
-	const agentOptions = agents.installed ?? [];
+	const agentCatalog = agents as AgentCatalogWithAuth;
+	const installedAgents = agents.installed ?? [];
+	const agentOptions = agentCatalog.authorized ?? [];
 	const supportedAgents = agents.supported ?? [];
-	const hasInstalledAgents = agentOptions.length > 0;
+	const authorizedCount = agentCatalog.counts.authorized ?? agentOptions.length;
+	const authStatusUnavailable = agentCatalog.authorized === undefined && installedAgents.length > 0;
 	const [form, setForm] = useState({
 		defaultBranch: config.defaultBranch ?? project.defaultBranch ?? "",
 		sessionPrefix: config.sessionPrefix ?? "",
@@ -105,6 +112,7 @@ function SettingsBody({
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [restartedAt, setRestartedAt] = useState<number | null>(null);
+	const [showAuthPrompt, setShowAuthPrompt] = useState(authStatusUnavailable);
 
 	const mutation = useMutation({
 		mutationFn: async () => {
@@ -148,13 +156,37 @@ function SettingsBody({
 	});
 
 	return (
-		<form
-			className="mx-auto flex max-w-2xl flex-col gap-4"
-			onSubmit={(event) => {
-				event.preventDefault();
-				mutation.mutate();
-			}}
-		>
+		<>
+			{showAuthPrompt && authStatusUnavailable && (
+				<div className="fixed inset-0 z-50 grid place-items-center bg-background/75 p-6">
+					<div
+						role="dialog"
+						aria-modal="true"
+						aria-labelledby="agent-auth-prompt-title"
+						className="w-full max-w-md rounded-lg border border-border bg-popover p-5 text-popover-foreground shadow-lg"
+					>
+						<h2 id="agent-auth-prompt-title" className="mb-2 text-[14px] font-medium">
+							Agent login needed
+						</h2>
+						<p className="mb-4 text-[13px] text-muted-foreground">
+							AO found installed agents, but none are verified as authorized yet. Log in to one of{" "}
+							<span className="text-foreground">{formatAgentList(installedAgents)}</span>, then reload settings.
+						</p>
+						<div className="flex justify-end">
+							<Button type="button" variant="primary" onClick={() => setShowAuthPrompt(false)}>
+								Dismiss
+							</Button>
+						</div>
+					</div>
+				</div>
+			)}
+			<form
+				className="mx-auto flex max-w-2xl flex-col gap-4"
+				onSubmit={(event) => {
+					event.preventDefault();
+					mutation.mutate();
+				}}
+			>
 			<Card>
 				<CardHeader>
 					<CardTitle className="text-[13px]">Identity</CardTitle>
@@ -201,18 +233,20 @@ function SettingsBody({
 						<div>
 							{agents.counts.installed} of {agents.counts.supported} supported agents installed on this machine.
 						</div>
-						<div>Only installed agents are selectable. Orchestrator agent changes restart the orchestrator.</div>
-						{!hasInstalledAgents && (
-							<div className="mt-1 text-warning">No supported agent runtime was detected.</div>
+						<div>
+							{authorizedCount} installed agents authorized. Only authorized agents are selectable. Orchestrator agent changes restart the orchestrator.
+						</div>
+						{authorizedCount === 0 && (
+							<div className="mt-1 text-warning">No authorized supported agent runtime was detected.</div>
 						)}
 					</div>
 					<Field label="Default worker agent" htmlFor="workerAgent">
 						<AgentSelect
 							id="workerAgent"
 							value={form.workerAgent}
-							installed={agentOptions}
+							authorized={agentOptions}
+							installed={installedAgents}
 							supported={supportedAgents}
-							disabled={!hasInstalledAgents}
 							onChange={(v) => setForm((f) => ({ ...f, workerAgent: v }))}
 						/>
 					</Field>
@@ -220,9 +254,9 @@ function SettingsBody({
 						<AgentSelect
 							id="orchestratorAgent"
 							value={form.orchestratorAgent}
-							installed={agentOptions}
+							authorized={agentOptions}
+							installed={installedAgents}
 							supported={supportedAgents}
-							disabled={!hasInstalledAgents}
 							onChange={(v) => setForm((f) => ({ ...f, orchestratorAgent: v }))}
 						/>
 					</Field>
@@ -260,7 +294,8 @@ function SettingsBody({
 					</span>
 				)}
 			</div>
-		</form>
+			</form>
+		</>
 	);
 }
 
@@ -313,28 +348,46 @@ function PermissionModeSelect({
 function AgentSelect({
 	id,
 	value,
+	authorized,
 	installed,
 	supported,
-	disabled,
 	onChange,
 }: {
 	id: string;
 	value: string;
+	authorized: AgentInfo[];
 	installed: AgentInfo[];
 	supported: AgentInfo[];
-	disabled?: boolean;
 	onChange: (value: string) => void;
 }) {
 	// "" sentinel → daemon default; Select can't hold an empty value, so map it.
-	const installedIds = new Set(installed.map((agent) => agent.id));
+	const authorizedIds = new Set(authorized.map((agent) => agent.id));
+	const installedById = new Map(installed.map((agent) => [agent.id, agent]));
 	const supportedById = new Map(supported.map((agent) => [agent.id, agent]));
-	const missingCurrent = value !== "" && !installedIds.has(value);
+	const configuredUnavailable = value !== "" && !authorizedIds.has(value);
+	const needsFallbackOption = value !== "" && !supportedById.has(value);
 	const current = supportedById.get(value);
+	const currentInstalled = installedById.get(value);
+	const options = supported
+		.map((agent) => {
+			const installedAgent = installedById.get(agent.id);
+			const isAuthorized = authorizedIds.has(agent.id);
+			const rank = isAuthorized ? 0 : installedAgent ? 1 : 2;
+			return {
+				...agent,
+				disabled: !isAuthorized,
+				rank,
+				reason: !installedAgent ? "Needs install" : !isAuthorized ? "Needs auth" : "",
+			};
+		})
+		.sort((a, b) => a.rank - b.rank || a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
+	const currentWarning = currentInstalled
+			? `${current?.label ?? value} is configured but is not authorized on this machine.`
+			: `${current?.label ?? value} is configured but was not detected on this machine.`;
 	return (
 		<div className="flex flex-col gap-1.5">
 			<Select
 				value={value || "__default__"}
-				disabled={disabled}
 				onValueChange={(v) => onChange(v === "__default__" ? "" : v)}
 			>
 				<SelectTrigger id={id} className="h-8 w-full text-[13px]">
@@ -342,23 +395,25 @@ function AgentSelect({
 				</SelectTrigger>
 				<SelectContent>
 					<SelectItem value="__default__">Daemon default</SelectItem>
-					{missingCurrent && (
-						<SelectItem value={value}>
-							{current?.label ?? value} <span className="text-warning">(Not detected)</span>
+					{needsFallbackOption && (
+						<SelectItem value={value} disabled>
+							<span className="flex min-w-0 flex-1 items-center justify-between gap-4">
+								<span className="truncate">{value}</span>
+								<span className="shrink-0 text-[11px] text-muted-foreground">Needs install</span>
+							</span>
 						</SelectItem>
 					)}
-					{installed.map((agent) => (
-						<SelectItem key={agent.id} value={agent.id}>
-							{agent.label}
+					{options.map((agent) => (
+						<SelectItem key={agent.id} value={agent.id} disabled={agent.disabled}>
+							<span className="flex min-w-0 flex-1 items-center justify-between gap-4">
+								<span className="truncate">{agent.label}</span>
+								{agent.reason && <span className="shrink-0 text-[11px] text-muted-foreground">{agent.reason}</span>}
+							</span>
 						</SelectItem>
 					))}
 				</SelectContent>
 			</Select>
-			{missingCurrent && (
-				<span className="text-[12px] text-warning">
-					{current?.label ?? value} is configured but was not detected on this machine.
-				</span>
-			)}
+			{configuredUnavailable && <span className="text-[12px] text-warning">{currentWarning}</span>}
 		</div>
 	);
 }
@@ -389,6 +444,12 @@ function CenteredNote({ children }: { children: React.ReactNode }) {
 			{children}
 		</div>
 	);
+}
+
+function formatAgentList(agents: AgentInfo[]) {
+	const labels = agents.map((agent) => agent.label || agent.id).sort((a, b) => a.localeCompare(b));
+	if (labels.length <= 2) return labels.join(" or ");
+	return `${labels.slice(0, -1).join(", ")}, or ${labels[labels.length - 1]}`;
 }
 
 // Drop an object whose every value is undefined so we send `undefined` (omit)
