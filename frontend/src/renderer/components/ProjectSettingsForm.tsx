@@ -2,7 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
-import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { findProjectOrchestrator } from "../types/workspace";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -95,13 +96,24 @@ function SettingsBody({
 	onSaved: () => void;
 }) {
 	const queryClient = useQueryClient();
+	const workspaces = useWorkspaceQuery().data ?? [];
 	const config = project.config ?? {};
 	const agentCatalog = agents as AgentCatalogWithAuth;
 	const installedAgents = agents.installed ?? [];
 	const agentOptions = agentCatalog.authorized ?? [];
 	const supportedAgents = agents.supported ?? [];
+	const agentLabels = new Map(
+		[...supportedAgents, ...installedAgents, ...agentOptions].map((agent) => [agent.id, agent.label] as const),
+	);
 	const authorizedCount = agentCatalog.counts.authorized ?? agentOptions.length;
 	const authStatusUnavailable = agentCatalog.authorized === undefined && installedAgents.length > 0;
+	const liveOrchestrator = findProjectOrchestrator(workspaces, projectId);
+	const savedOrchestratorAgent = effectiveDesiredOrchestratorAgent(project);
+	const runningOrchestratorAgent = liveOrchestrator?.provider ?? "";
+	const spawnFailurePending = liveOrchestrator !== undefined && savedOrchestratorAgent !== runningOrchestratorAgent;
+	const replacementNeeded = spawnFailurePending;
+	const retryRequiresIdle = spawnFailurePending;
+	const retryBlockedUntilIdle = retryRequiresIdle && liveOrchestrator !== undefined && workspaceOrchestratorRestartBlocked(liveOrchestrator);
 	const [form, setForm] = useState({
 		defaultBranch: config.defaultBranch ?? project.defaultBranch ?? "",
 		sessionPrefix: config.sessionPrefix ?? "",
@@ -113,6 +125,7 @@ function SettingsBody({
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [restartedAt, setRestartedAt] = useState<number | null>(null);
 	const [showAuthPrompt, setShowAuthPrompt] = useState(authStatusUnavailable);
+	const [replacementNotice, setReplacementNotice] = useState<string | null>(null);
 
 	const mutation = useMutation({
 		mutationFn: async () => {
@@ -140,20 +153,51 @@ function SettingsBody({
 			});
 			if (error) throw new Error(apiErrorMessage(error));
 			if (orchestratorAgentChanged) {
-				const { error: restartError } = await apiClient.POST("/api/v1/orchestrators", {
-					body: { projectId, clean: true },
-				});
-				if (restartError) throw new Error(`Saved config, but failed to restart orchestrator: ${apiErrorMessage(restartError)}`);
+				try {
+					return {
+						restarted: true,
+						replacement: await restartOrchestrator(projectId),
+					};
+				} catch (error) {
+					await invalidateReplacementQueries(queryClient, projectId);
+					throw new Error(
+						`Saved config. New orchestrator failed to start, and the previous orchestrator is still running: ${errorMessage(
+							error,
+						)}`,
+					);
+				}
 			}
-			return { restarted: orchestratorAgentChanged };
+			return { restarted: false, replacement: { incomplete: false, notice: null } };
 		},
-		onSuccess: ({ restarted }) => {
+		onSuccess: async ({ restarted, replacement }) => {
 			setSavedAt(Date.now());
 			setRestartedAt(restarted ? Date.now() : null);
-			void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+			setReplacementNotice(replacement.notice);
+			await invalidateReplacementQueries(queryClient, projectId);
 			onSaved();
 		},
+		onError: () => {
+			setReplacementNotice(null);
+		},
 	});
+	const retryReplacementMutation = useMutation({
+		mutationFn: async () => {
+			await assertOrchestratorCanRestart(projectId);
+			return restartOrchestrator(projectId);
+		},
+		onSuccess: async (replacement) => {
+			setSavedAt(Date.now());
+			setRestartedAt(Date.now());
+			setReplacementNotice(replacement.notice);
+			await invalidateReplacementQueries(queryClient, projectId);
+			onSaved();
+		},
+		onError: () => {
+			setReplacementNotice(null);
+		},
+	});
+	const runningAgentLabel = agentName(runningOrchestratorAgent, agentLabels);
+	const savedAgentLabel = desiredAgentLabel(project, agentLabels);
 
 	return (
 		<>
@@ -187,6 +231,48 @@ function SettingsBody({
 					mutation.mutate();
 				}}
 			>
+			{replacementNeeded && (
+				<Card className="border-warning/40 bg-warning/5">
+					<CardHeader>
+						<CardTitle className="text-[13px] text-warning">Orchestrator replacement pending</CardTitle>
+					</CardHeader>
+					<CardContent className="flex flex-col gap-3 text-[12px] text-muted-foreground">
+						<div>
+							Saved orchestrator agent is <span className="text-foreground">{savedAgentLabel}</span>, but the
+							running orchestrator is still <span className="text-foreground">{runningAgentLabel}</span>.
+						</div>
+						<div>
+							{retryBlockedUntilIdle
+								? "The previous orchestrator was kept alive because the replacement failed to start. It must become idle before retry can run."
+								: "The previous orchestrator was kept alive because the replacement failed to start."}
+						</div>
+						<div className="flex items-center gap-3">
+							<Button
+								type="button"
+								variant="outline"
+								disabled={retryReplacementMutation.isPending || retryBlockedUntilIdle}
+								onClick={() => retryReplacementMutation.mutate()}
+							>
+								{retryReplacementMutation.isPending
+									? "Retrying…"
+									: retryBlockedUntilIdle
+										? "Retry when idle"
+									: "Retry orchestrator replacement"}
+							</Button>
+							{retryBlockedUntilIdle && (
+								<span>Current orchestrator must be idle before retrying.</span>
+							)}
+							{retryReplacementMutation.isError && (
+								<span className="text-error">
+									{retryReplacementMutation.error instanceof Error
+										? retryReplacementMutation.error.message
+										: "Retry failed"}
+								</span>
+							)}
+						</div>
+					</CardContent>
+				</Card>
+			)}
 			<Card>
 				<CardHeader>
 					<CardTitle className="text-[13px]">Identity</CardTitle>
@@ -280,7 +366,7 @@ function SettingsBody({
 			</Card>
 
 			<div className="flex items-center gap-3">
-				<Button type="submit" variant="primary" disabled={mutation.isPending}>
+				<Button type="submit" variant="primary" disabled={mutation.isPending || retryReplacementMutation.isPending}>
 					{mutation.isPending ? "Saving…" : "Save changes"}
 				</Button>
 				{mutation.isError && (
@@ -288,7 +374,15 @@ function SettingsBody({
 						{mutation.error instanceof Error ? mutation.error.message : "Save failed"}
 					</span>
 				)}
-				{savedAt && !mutation.isPending && !mutation.isError && (
+				{replacementNotice && !mutation.isPending && !mutation.isError && !retryReplacementMutation.isPending && (
+					<span className="text-[12px] text-warning">{replacementNotice}</span>
+				)}
+				{savedAt &&
+					!mutation.isPending &&
+					!mutation.isError &&
+					!replacementNotice &&
+					!retryReplacementMutation.isPending &&
+					!retryReplacementMutation.isError && (
 					<span className="text-[12px] text-success">
 						{restartedAt ? "Saved. Orchestrator restarted." : "Saved."}
 					</span>
@@ -317,6 +411,61 @@ async function assertOrchestratorCanRestart(projectId: string) {
 function orchestratorRestartBlocked(session: Session) {
 	if (session.status === "idle" || session.status === "terminated") return false;
 	return true;
+}
+
+function workspaceOrchestratorRestartBlocked(session: { status: string }) {
+	return session.status !== "idle" && session.status !== "terminated";
+}
+
+async function restartOrchestrator(projectId: string) {
+	const { error } = await apiClient.POST("/api/v1/orchestrators", {
+		body: { projectId, clean: true },
+	});
+	if (!error) {
+		return { incomplete: false, notice: null as string | null };
+	}
+	if (apiErrorCode(error) === "ORCHESTRATOR_REPLACEMENT_INCOMPLETE") {
+		return {
+			incomplete: true,
+			notice: "Saved. New orchestrator started, but the previous orchestrator could not be retired yet.",
+		};
+	}
+	throw new Error(apiErrorMessage(error));
+}
+
+async function invalidateReplacementQueries(queryClient: ReturnType<typeof useQueryClient>, projectId: string) {
+	await Promise.all([
+		queryClient.invalidateQueries({ queryKey: ["project", projectId] }),
+		queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
+	]);
+}
+
+function agentName(agentID: string, labels: Map<string, string>) {
+	if (agentID === "") return "daemon default";
+	return labels.get(agentID) ?? agentID;
+}
+
+function effectiveDesiredOrchestratorAgent(project: Project) {
+	return project.config?.orchestrator?.agent ?? project.agent ?? "";
+}
+
+function desiredAgentLabel(project: Project, labels: Map<string, string>) {
+	const explicit = project.config?.orchestrator?.agent ?? "";
+	if (explicit !== "") return agentName(explicit, labels);
+	if (project.agent) return `${agentName(project.agent, labels)} (daemon default)`;
+	return "daemon default";
+}
+
+function errorMessage(error: unknown) {
+	return error instanceof Error ? error.message : apiErrorMessage(error);
+}
+
+function apiErrorCode(error: unknown) {
+	if (typeof error === "object" && error !== null && "code" in error) {
+		const code = (error as { code?: unknown }).code;
+		if (typeof code === "string" && code !== "") return code;
+	}
+	return "";
 }
 
 function PermissionModeSelect({

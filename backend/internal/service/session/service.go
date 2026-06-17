@@ -39,6 +39,7 @@ type commander interface {
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error)
 	Restore(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
+	RetireOrchestrator(ctx context.Context, id domain.SessionID) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error)
@@ -154,26 +155,40 @@ func (s *Service) requireProject(ctx context.Context, id domain.ProjectID) error
 }
 
 // SpawnOrchestrator spawns an orchestrator session for a project. When clean is
-// true it first tears down any active orchestrator(s) for that project so the new
-// one is the only live coordinator — a business rule that belongs here, not in the
-// HTTP controller.
+// true it performs a replacement cutover: start the new orchestrator first,
+// then retire any older active orchestrators for that project so a failed
+// replacement never causes downtime. This business rule belongs here, not in
+// the HTTP controller.
 func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
 	if err := s.requireProject(ctx, projectID); err != nil {
 		return domain.Session{}, err
 	}
+	var existing []domain.Session
 	if clean {
 		active := true
-		existing, err := s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
+		var err error
+		existing, err = s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
 		if err != nil {
 			return domain.Session{}, err
 		}
-		for _, orch := range existing {
-			if _, err := s.Kill(ctx, orch.ID); err != nil {
-				return domain.Session{}, err
-			}
+	}
+	sess, err := s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	if err != nil || !clean {
+		return sess, err
+	}
+	for _, orch := range existing {
+		if orch.ID == sess.ID {
+			continue
+		}
+		if err := s.manager.RetireOrchestrator(ctx, orch.ID); err != nil {
+			return domain.Session{}, apierr.Conflict(
+				"ORCHESTRATOR_REPLACEMENT_INCOMPLETE",
+				fmt.Sprintf("Replacement orchestrator started, but previous orchestrator %s could not be retired", orch.ID),
+				map[string]any{"oldOrchestratorId": orch.ID},
+			)
 		}
 	}
-	return s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	return sess, nil
 }
 
 // Restore relaunches a terminated session and returns the API-facing read model.

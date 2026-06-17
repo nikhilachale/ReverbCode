@@ -49,6 +49,8 @@ async function chooseOption(trigger: HTMLElement, optionName: string) {
 let projectResponse: unknown;
 let agentsResponse: unknown;
 let orchestratorsResponse: unknown;
+let projectsListResponse: unknown;
+let sessionsListResponse: unknown;
 
 beforeEach(() => {
 	getMock.mockReset();
@@ -59,6 +61,8 @@ beforeEach(() => {
 	projectResponse = undefined;
 	agentsResponse = undefined;
 	orchestratorsResponse = { data: { sessions: [] }, error: undefined };
+	projectsListResponse = { data: { projects: [] }, error: undefined };
+	sessionsListResponse = { data: { sessions: [] }, error: undefined };
 });
 
 describe("ProjectSettingsForm", () => {
@@ -299,6 +303,182 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByText("Saved. Orchestrator restarted.")).toBeInTheDocument();
 	});
 
+	it("shows a persistent retry action when config saves but orchestrator replacement fails", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+		mockAgents({
+			supported: [
+				{ id: "claude-code", label: "Claude Code" },
+				{ id: "codex", label: "Codex" },
+			],
+			installed: [
+				{ id: "claude-code", label: "Claude Code" },
+				{ id: "codex", label: "Codex" },
+			],
+			authorized: [
+				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
+				{ id: "codex", label: "Codex", authStatus: "authorized" },
+			],
+			counts: { supported: 2, installed: 2, authorized: 2 },
+		});
+		mockOrchestrators([
+			{
+				id: "proj-1-orchestrator",
+				projectId: "proj-1",
+				kind: "orchestrator",
+				harness: "claude-code",
+				status: "idle",
+				isTerminated: false,
+			},
+		]);
+		mockGetResponses();
+		putMock.mockImplementation(async () => {
+			mockProject({
+				id: "proj-1",
+				name: "Project One",
+				kind: "single_repo",
+				path: "/repo/project-one",
+				repo: "",
+				defaultBranch: "main",
+				config: {
+					orchestrator: { agent: "codex" },
+				},
+			});
+			return { data: { project: {} }, error: undefined };
+		});
+		postMock
+			.mockResolvedValueOnce({ data: undefined, error: { message: "agent binary missing" } })
+			.mockResolvedValueOnce({ data: { orchestrator: { id: "proj-2-orchestrator", projectId: "proj-1" } }, error: undefined });
+
+		renderSettings();
+
+		await chooseOption(await screen.findByRole("combobox", { name: "Default orchestrator agent" }), "Codex");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(
+			await screen.findByText(
+				"Saved config. New orchestrator failed to start, and the previous orchestrator is still running: agent binary missing",
+			),
+		).toBeInTheDocument();
+		expect(await screen.findByText("Orchestrator replacement pending")).toBeInTheDocument();
+		expect(
+			screen.getByText((_, node) => node?.textContent === "Saved orchestrator agent is Codex, but the running orchestrator is still Claude Code."),
+		).toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "Retry orchestrator replacement" }));
+
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+		expect(postMock).toHaveBeenNthCalledWith(2, "/api/v1/orchestrators", {
+			body: { projectId: "proj-1", clean: true },
+		});
+		expect(putMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("disables spawn retry until the old orchestrator becomes idle", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				orchestrator: { agent: "codex" },
+			},
+		});
+		mockAgents({
+			supported: [
+				{ id: "claude-code", label: "Claude Code" },
+				{ id: "codex", label: "Codex" },
+			],
+			installed: [
+				{ id: "claude-code", label: "Claude Code" },
+				{ id: "codex", label: "Codex" },
+			],
+			authorized: [
+				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
+				{ id: "codex", label: "Codex", authStatus: "authorized" },
+			],
+			counts: { supported: 2, installed: 2, authorized: 2 },
+		});
+		mockOrchestrators([
+			{
+				id: "proj-1-orchestrator",
+				projectId: "proj-1",
+				kind: "orchestrator",
+				harness: "claude-code",
+				status: "working",
+				isTerminated: false,
+			},
+		]);
+		mockGetResponses();
+
+		renderSettings();
+
+		expect(await screen.findByText("Orchestrator replacement pending")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Retry when idle" })).toBeDisabled();
+		expect(screen.getByText("Current orchestrator must be idle before retrying.")).toBeInTheDocument();
+	});
+
+	it("keeps the retry card after reload when daemon default is the desired orchestrator agent", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			agent: "codex",
+			config: {},
+		});
+		mockAgents({
+			supported: [
+				{ id: "claude-code", label: "Claude Code" },
+				{ id: "codex", label: "Codex" },
+			],
+			installed: [
+				{ id: "claude-code", label: "Claude Code" },
+				{ id: "codex", label: "Codex" },
+			],
+			authorized: [
+				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
+				{ id: "codex", label: "Codex", authStatus: "authorized" },
+			],
+			counts: { supported: 2, installed: 2, authorized: 2 },
+		});
+		mockOrchestrators([
+			{
+				id: "proj-1-orchestrator",
+				projectId: "proj-1",
+				kind: "orchestrator",
+				harness: "claude-code",
+				status: "idle",
+				isTerminated: false,
+			},
+		]);
+		mockGetResponses();
+
+		renderSettings();
+
+		expect(await screen.findByText("Orchestrator replacement pending")).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				(_, node) =>
+					node?.textContent ===
+					"Saved orchestrator agent is Codex (daemon default), but the running orchestrator is still Claude Code.",
+			),
+		).toBeInTheDocument();
+	});
+
 	it("keeps a configured but missing agent visible with a warning", async () => {
 		mockProject({
 			id: "proj-1",
@@ -505,6 +685,21 @@ function mockProject(project: unknown) {
 		},
 		error: undefined,
 	};
+	if (project && typeof project === "object") {
+		const summary = project as { id?: unknown; name?: unknown; path?: unknown };
+		projectsListResponse = {
+			data: {
+				projects: [
+					{
+						id: summary.id,
+						name: summary.name,
+						path: summary.path,
+					},
+				],
+			},
+			error: undefined,
+		};
+	}
 }
 
 function mockAgents(agents: unknown) {
@@ -519,12 +714,18 @@ function mockOrchestrators(sessions: unknown[]) {
 		data: { sessions },
 		error: undefined,
 	};
+	sessionsListResponse = {
+		data: { sessions },
+		error: undefined,
+	};
 }
 
 function mockGetResponses() {
 	getMock.mockImplementation((path: string) => {
 		if (path === "/api/v1/agents") return Promise.resolve(agentsResponse);
+		if (path === "/api/v1/projects") return Promise.resolve(projectsListResponse);
 		if (path === "/api/v1/orchestrators") return Promise.resolve(orchestratorsResponse);
+		if (path === "/api/v1/sessions") return Promise.resolve(sessionsListResponse);
 		return Promise.resolve(projectResponse);
 	});
 }

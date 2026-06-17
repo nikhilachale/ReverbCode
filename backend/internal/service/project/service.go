@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 )
@@ -46,6 +47,10 @@ type SessionTeardowner interface {
 type Service struct {
 	store    Store
 	sessions SessionTeardowner
+	// defaultHarness is the daemon's configured default agent. Project detail
+	// responses expose it so clients can compare an explicit empty override
+	// against the real effective default.
+	defaultHarness domain.AgentHarness
 	// addMu serialises the whole body of Add. Workspace registration performs
 	// filesystem mutations (git init, .gitignore writes, commits) that are not
 	// covered by the store's own writeMu, so path/id conflict checks plus the
@@ -59,6 +64,9 @@ var _ Manager = (*Service)(nil)
 type Deps struct {
 	Store    Store
 	Sessions SessionTeardowner
+	// DefaultHarness is the daemon's configured default agent (AO_AGENT).
+	// When empty, the service falls back to config.DefaultAgent.
+	DefaultHarness domain.AgentHarness
 }
 
 // New returns a project service backed by the given durable store.
@@ -68,7 +76,11 @@ func New(store Store) *Service {
 
 // NewWithDeps returns a project service with optional teardown dependencies.
 func NewWithDeps(d Deps) *Service {
-	return &Service{store: d.Store, sessions: d.Sessions}
+	defaultHarness := d.DefaultHarness
+	if defaultHarness == "" {
+		defaultHarness = domain.AgentHarness(config.DefaultAgent)
+	}
+	return &Service{store: d.Store, sessions: d.Sessions, defaultHarness: defaultHarness}
 }
 
 // List returns every active registered project.
@@ -102,7 +114,7 @@ func (m *Service) Get(ctx context.Context, id domain.ProjectID) (GetResult, erro
 	if !ok || !row.ArchivedAt.IsZero() {
 		return GetResult{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
-	p := projectFromRow(row)
+	p := m.projectFromRow(row)
 	if row.Kind.WithDefault() == domain.ProjectKindWorkspace {
 		repos, err := m.store.ListWorkspaceRepos(ctx, row.ID)
 		if err != nil {
@@ -187,7 +199,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		if err := m.store.UpsertWorkspaceProject(ctx, row, repos); err != nil {
 			return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register workspace project")
 		}
-		p := projectFromRow(row)
+		p := m.projectFromRow(row)
 		p.WorkspaceRepos = workspaceReposFromRecords(repos)
 		return p, nil
 	}
@@ -208,7 +220,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project")
 	}
-	return projectFromRow(row), nil
+	return m.projectFromRow(row), nil
 }
 
 // SetConfig replaces the project's stored config. The typed config is validated
@@ -231,7 +243,7 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_CONFIG_UPDATE_FAILED", "Failed to update project config")
 	}
-	return projectFromRow(row), nil
+	return m.projectFromRow(row), nil
 }
 
 // resolveGitOriginURL returns the project's `origin` remote URL via
@@ -297,7 +309,7 @@ func (m *Service) suggestID(ctx context.Context, base domain.ProjectID) domain.P
 	}
 }
 
-func projectFromRow(row domain.ProjectRecord) Project {
+func (m *Service) projectFromRow(row domain.ProjectRecord) Project {
 	p := Project{
 		ID:            domain.ProjectID(row.ID),
 		Name:          displayName(row),
@@ -305,6 +317,7 @@ func projectFromRow(row domain.ProjectRecord) Project {
 		Path:          row.Path,
 		Repo:          row.RepoOriginURL,
 		DefaultBranch: row.Config.WithDefaults().DefaultBranch,
+		Agent:         string(m.defaultHarness),
 	}
 	if !row.Config.IsZero() {
 		cfg := row.Config

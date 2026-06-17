@@ -110,7 +110,7 @@ func Run() error {
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Agents:             agentsvc.New(),
-		Projects:           projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc}),
+		Projects:           projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent)}),
 		Sessions:           sessionSvc,
 		Reviews:            reviewSvc,
 		Notifications:      notifier,
