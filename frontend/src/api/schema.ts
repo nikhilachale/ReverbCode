@@ -472,6 +472,23 @@ export interface components {
             reason: string;
             sessionId: string;
         };
+        ControllersSessionView: {
+            activity: components["schemas"]["DomainActivity"];
+            /** Format: date-time */
+            createdAt: string;
+            displayName?: string;
+            harness?: string;
+            id: string;
+            isTerminated: boolean;
+            issueId?: string;
+            kind: string;
+            projectId: string;
+            prs: components["schemas"]["SessionPRFacts"][];
+            status: string;
+            terminalHandleId?: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
         DegradedProject: {
             id: string;
             kind: string;
@@ -513,7 +530,7 @@ export interface components {
             sessionId: string;
         };
         ListSessionsResponse: {
-            sessions: components["schemas"]["Session"][];
+            sessions: components["schemas"]["ControllersSessionView"][];
         };
         MergePRResponse: {
             method: string;
@@ -605,7 +622,7 @@ export interface components {
         };
         RestoreSessionResponse: {
             ok: boolean;
-            session: components["schemas"]["Session"];
+            session: components["schemas"]["ControllersSessionView"];
             sessionId: string;
         };
         ReviewRun: {
@@ -643,22 +660,6 @@ export interface components {
             ok: boolean;
             sessionId: string;
         };
-        Session: {
-            activity: components["schemas"]["DomainActivity"];
-            /** Format: date-time */
-            createdAt: string;
-            displayName?: string;
-            harness?: string;
-            id: string;
-            isTerminated: boolean;
-            issueId?: string;
-            kind: string;
-            projectId: string;
-            status: string;
-            terminalHandleId?: string;
-            /** Format: date-time */
-            updatedAt: string;
-        };
         SessionPRFacts: {
             ci: string;
             mergeability: string;
@@ -672,7 +673,7 @@ export interface components {
             url: string;
         };
         SessionResponse: {
-            session: components["schemas"]["Session"];
+            session: components["schemas"]["ControllersSessionView"];
         };
         SetActivityRequest: {
             /**

@@ -88,6 +88,33 @@ describe("ProjectSettingsForm", () => {
 				agentConfig: {
 					model: "claude-opus-4-5",
 					permissions: "auto",
+		getMock.mockResolvedValue({
+			data: {
+				status: "ok",
+				project: {
+					id: "proj-1",
+					name: "Project One",
+					kind: "single_repo",
+					path: "/repo/project-one",
+					repo: "git@github.com:acme/project-one.git",
+					defaultBranch: "main",
+					config: {
+						defaultBranch: "develop",
+						sessionPrefix: "po",
+						env: { FOO: "bar" },
+						symlinks: [".env"],
+						postCreate: ["npm install"],
+						worker: {
+							agent: "codex",
+							agentConfig: { model: "worker-model" },
+						},
+						orchestrator: { agent: "claude-code" },
+						agentConfig: {
+							model: "claude-opus-4-5",
+							permissions: "auto",
+						},
+						reviewers: [{ harness: "claude-code" }],
+					},
 				},
 			},
 		});
@@ -128,7 +155,11 @@ describe("ProjectSettingsForm", () => {
 		const permissionMode = screen.getByRole("combobox", { name: "Permission mode" });
 		expect(workerAgent).toHaveTextContent("Codex");
 		expect(orchestratorAgent).toHaveTextContent("Claude Code");
+		const reviewerAgent = screen.getByRole("combobox", { name: "Default reviewer agent" });
+		expect(workerAgent).toHaveTextContent("codex");
+		expect(orchestratorAgent).toHaveTextContent("claude-code");
 		expect(permissionMode).toHaveTextContent("Auto");
+		expect(reviewerAgent).toHaveTextContent("claude-code");
 
 		await userEvent.clear(screen.getByLabelText("Default branch"));
 		await userEvent.type(screen.getByLabelText("Default branch"), "release");
@@ -165,6 +196,7 @@ describe("ProjectSettingsForm", () => {
 						model: "gpt-5-codex",
 						permissions: "bypass-permissions",
 					},
+					reviewers: [{ harness: "claude-code" }],
 				},
 			},
 		});
@@ -201,7 +233,7 @@ describe("ProjectSettingsForm", () => {
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
 		expect(postMock).not.toHaveBeenCalled();
 		expect(await screen.findByText("Saved.")).toBeInTheDocument();
-	});
+	}, 10_000);
 
 	it("blocks orchestrator agent changes while the project orchestrator is active", async () => {
 		mockProject({

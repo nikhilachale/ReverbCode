@@ -1,15 +1,17 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { GitBranch, LayoutGrid, PanelRightClose, PanelRightOpen, Waypoints } from "lucide-react";
+import { GitBranch, LayoutGrid, PanelRightClose, PanelRightOpen, Square, Waypoints } from "lucide-react";
 import { useState } from "react";
 import {
 	findProjectOrchestrator,
 	isOrchestratorSession,
+	sessionIsActive,
 	workerDisplayStatus,
 	type WorkerDisplayStatus,
 	type WorkspaceSession,
 } from "../types/workspace";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { useUiStore } from "../stores/ui-store";
 import { cn } from "../lib/utils";
@@ -36,7 +38,8 @@ const STATUS_PILL: Record<WorkerDisplayStatus, { label: string; tone: string; br
 // (.is-under-titlebar-nav pads past them). The
 // variant is derived from the route, not props: a sessionId in the URL swaps
 // the lead to the session identity (orchestrator crumb + mode badge, or worker
-// branch + status pill) and the actions to Kanban/inspector controls;
+// branch + status pill) and the actions to board/orchestrator + inspector
+// controls (orchestrators open the Kanban board; workers open their orchestrator);
 // otherwise it's the dashboard crumb plus the Orchestrator launcher when a
 // project is in scope. Merges the old DashboardTopbar/Topbar pair —
 // agent-orchestrator keeps those as two components aligned only by CSS.
@@ -127,16 +130,33 @@ export function ShellTopbar() {
 			<div className="dashboard-app-header__actions">
 				{isSessionRoute ? (
 					<>
-						<button
-							aria-label={isOrchestrator ? "Open Kanban" : "Back to board"}
-							className="dashboard-app-header__primary-btn"
-							onClick={openBoard}
-							style={noDragStyle}
-							type="button"
-						>
-							<LayoutGrid className="h-3.5 w-3.5" aria-hidden="true" />
-							{isOrchestrator ? "Open Kanban" : "Kanban"}
-						</button>
+						{isOrchestrator ? (
+							<button
+								aria-label="Open Kanban"
+								className="dashboard-app-header__primary-btn"
+								onClick={openBoard}
+								style={noDragStyle}
+								type="button"
+							>
+								<LayoutGrid className="h-3.5 w-3.5" aria-hidden="true" />
+								Open Kanban
+							</button>
+						) : (
+							<button
+								aria-label="Open orchestrator"
+								className="dashboard-app-header__primary-btn"
+								disabled={isSpawning}
+								onClick={() => void openOrchestrator()}
+								style={noDragStyle}
+								type="button"
+							>
+								<Waypoints className="h-3.5 w-3.5" aria-hidden="true" />
+								{isSpawning ? "Spawning…" : "Open orchestrator"}
+							</button>
+						)}
+						{/* Kill control sits beside the orchestrator link for active workers —
+						    moved here from the inspector's Summary "Danger zone". */}
+						{!isOrchestrator && session && sessionIsActive(session) ? <TopbarKillButton session={session} /> : null}
 						{/* Inspector collapse (worker sessions only — orchestrators have no rail). */}
 						{!isOrchestrator && (
 							<button
@@ -189,6 +209,77 @@ export function ShellTopbar() {
 				) : null}
 			</div>
 		</header>
+	);
+}
+
+// Compact kill control for the topbar actions row. Stop a running worker and
+// tear down its runtime/workspace. Kill is irreversible from the UI, so the
+// button arms a one-step confirmation before firing POST /sessions/{id}/kill,
+// then invalidates the workspace query so the session drops into the board's
+// terminated group.
+export function TopbarKillButton({ session }: { session: WorkspaceSession }) {
+	const queryClient = useQueryClient();
+	const [confirming, setConfirming] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
+	const kill = useMutation({
+		mutationFn: async () => {
+			const { error: apiError } = await apiClient.POST("/api/v1/sessions/{sessionId}/kill", {
+				params: { path: { sessionId: session.id } },
+			});
+			if (apiError) throw new Error(apiErrorMessage(apiError));
+		},
+		onSuccess: () => {
+			setConfirming(false);
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		},
+		onError: (e) => setError(e instanceof Error ? e.message : "Kill failed"),
+	});
+
+	if (confirming) {
+		return (
+			<div className="dashboard-app-header__kill-confirm" style={noDragStyle}>
+				<button
+					aria-label="Confirm kill"
+					className="dashboard-app-header__kill-confirm-btn"
+					disabled={kill.isPending}
+					onClick={() => kill.mutate()}
+					type="button"
+				>
+					<Square className="h-3.5 w-3.5" aria-hidden="true" />
+					{kill.isPending ? "Killing…" : "Confirm kill"}
+				</button>
+				<button
+					className="dashboard-app-header__kill-cancel-btn"
+					disabled={kill.isPending}
+					onClick={() => setConfirming(false)}
+					type="button"
+				>
+					Cancel
+				</button>
+				{error ? (
+					<span className="dashboard-app-header__kill-error" role="alert">
+						{error}
+					</span>
+				) : null}
+			</div>
+		);
+	}
+
+	return (
+		<button
+			aria-label="Kill session"
+			className="dashboard-app-header__kill-btn"
+			onClick={() => {
+				setError(null);
+				setConfirming(true);
+			}}
+			style={noDragStyle}
+			title="Kill session"
+			type="button"
+		>
+			<Square className="h-[15px] w-[15px]" aria-hidden="true" />
+		</button>
 	);
 }
 
