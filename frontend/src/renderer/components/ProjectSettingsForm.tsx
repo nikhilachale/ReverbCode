@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { aoBridge } from "../lib/bridge";
 import { agentsQueryKey, type AgentCatalog, useAgentsQuery } from "../hooks/useAgentsQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { findProjectOrchestrator } from "../types/workspace";
@@ -18,6 +19,11 @@ type AgentCatalogWithAuth = AgentCatalog & {
 	authorized?: AgentInfo[];
 };
 type Session = components["schemas"]["ControllersSessionView"];
+type ReplacementResult = {
+	incomplete: boolean;
+	notice: string | null;
+	recoveryRequired: boolean;
+};
 
 const PERMISSION_MODE_OPTIONS = [
 	{ value: "default", label: "Default" },
@@ -126,6 +132,7 @@ function SettingsBody({
 	const [restartedAt, setRestartedAt] = useState<number | null>(null);
 	const [showAuthPrompt, setShowAuthPrompt] = useState(authStatusUnavailable);
 	const [replacementNotice, setReplacementNotice] = useState<string | null>(null);
+	const [replacementRecoveryRequired, setReplacementRecoveryRequired] = useState(false);
 
 	const mutation = useMutation({
 		mutationFn: async () => {
@@ -177,17 +184,19 @@ function SettingsBody({
 					);
 				}
 			}
-			return { restarted: false, replacement: { incomplete: false, notice: null } };
+			return { restarted: false, replacement: replacementComplete() };
 		},
 		onSuccess: async ({ restarted, replacement }) => {
 			setSavedAt(Date.now());
 			setRestartedAt(restarted ? Date.now() : null);
 			setReplacementNotice(replacement.notice);
+			setReplacementRecoveryRequired(replacement.recoveryRequired);
 			await invalidateReplacementQueries(queryClient, projectId);
 			onSaved();
 		},
 		onError: () => {
 			setReplacementNotice(null);
+			setReplacementRecoveryRequired(false);
 		},
 	});
 	const retryReplacementMutation = useMutation({
@@ -199,11 +208,22 @@ function SettingsBody({
 			setSavedAt(Date.now());
 			setRestartedAt(Date.now());
 			setReplacementNotice(replacement.notice);
+			setReplacementRecoveryRequired(replacement.recoveryRequired);
 			await invalidateReplacementQueries(queryClient, projectId);
 			onSaved();
 		},
 		onError: () => {
 			setReplacementNotice(null);
+			setReplacementRecoveryRequired(false);
+		},
+	});
+	const restartDaemonMutation = useMutation({
+		mutationFn: restartDaemon,
+		onSuccess: async () => {
+			setReplacementNotice("AO daemon restart requested.");
+			setReplacementRecoveryRequired(false);
+			await invalidateReplacementQueries(queryClient, projectId);
+			onSaved();
 		},
 	});
 	const runningAgentLabel = agentName(runningOrchestratorAgent, agentLabels);
@@ -260,7 +280,11 @@ function SettingsBody({
 							<Button
 								type="button"
 								variant="outline"
-								disabled={retryReplacementMutation.isPending || retryBlockedUntilIdle}
+								disabled={
+									retryReplacementMutation.isPending ||
+									restartDaemonMutation.isPending ||
+									retryBlockedUntilIdle
+								}
 								onClick={() => retryReplacementMutation.mutate()}
 							>
 								{retryReplacementMutation.isPending
@@ -385,7 +409,11 @@ function SettingsBody({
 			</Card>
 
 			<div className="flex items-center gap-3">
-				<Button type="submit" variant="primary" disabled={mutation.isPending || retryReplacementMutation.isPending}>
+				<Button
+					type="submit"
+					variant="primary"
+					disabled={mutation.isPending || retryReplacementMutation.isPending || restartDaemonMutation.isPending}
+				>
 					{mutation.isPending ? "Saving…" : "Save changes"}
 				</Button>
 				{mutation.isError && (
@@ -394,7 +422,24 @@ function SettingsBody({
 					</span>
 				)}
 				{replacementNotice && !mutation.isPending && !mutation.isError && !retryReplacementMutation.isPending && (
-					<span className="text-[12px] text-warning">{replacementNotice}</span>
+					<div className="flex items-center gap-2 text-[12px] text-warning">
+						<span>{replacementNotice}</span>
+						{replacementRecoveryRequired && (
+							<Button
+								type="button"
+								variant="outline"
+								disabled={restartDaemonMutation.isPending}
+								onClick={() => restartDaemonMutation.mutate()}
+							>
+								{restartDaemonMutation.isPending ? "Restarting…" : "Restart AO daemon"}
+							</Button>
+						)}
+					</div>
+				)}
+				{restartDaemonMutation.isError && (
+					<span className="text-[12px] text-error">
+						{restartDaemonMutation.error instanceof Error ? restartDaemonMutation.error.message : "Restart failed"}
+					</span>
 				)}
 				{savedAt &&
 					!mutation.isPending &&
@@ -441,15 +486,36 @@ async function restartOrchestrator(projectId: string) {
 		body: { projectId, clean: true },
 	});
 	if (!error) {
-		return { incomplete: false, notice: null as string | null };
+		return replacementComplete();
 	}
 	if (apiErrorCode(error) === "ORCHESTRATOR_REPLACEMENT_INCOMPLETE") {
 		return {
 			incomplete: true,
 			notice: "Saved. New orchestrator started, but the previous orchestrator could not be retired yet.",
+			recoveryRequired: false,
+		};
+	}
+	if (apiErrorCode(error) === "ORCHESTRATOR_REPLACEMENT_RECOVERY_REQUIRED") {
+		return {
+			incomplete: true,
+			notice:
+				"Saved. New orchestrator started and the previous orchestrator was stopped, but its session state could not be updated.",
+			recoveryRequired: true,
 		};
 	}
 	throw new Error(apiErrorMessage(error));
+}
+
+function replacementComplete(): ReplacementResult {
+	return { incomplete: false, notice: null, recoveryRequired: false };
+}
+
+async function restartDaemon() {
+	await aoBridge.daemon.stop();
+	const status = await aoBridge.daemon.start();
+	if (status.state === "error") {
+		throw new Error(status.message ?? "AO daemon restart failed.");
+	}
 }
 
 async function invalidateReplacementQueries(queryClient: ReturnType<typeof useQueryClient>, projectId: string) {

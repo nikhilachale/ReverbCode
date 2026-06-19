@@ -3,10 +3,12 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getMock, postMock, putMock } = vi.hoisted(() => ({
+const { getMock, postMock, putMock, startDaemonMock, stopDaemonMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	postMock: vi.fn(),
 	putMock: vi.fn(),
+	startDaemonMock: vi.fn(),
+	stopDaemonMock: vi.fn(),
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -21,6 +23,15 @@ vi.mock("../lib/api-client", () => ({
 			return String((error as { message: unknown }).message);
 		}
 		return "Request failed";
+	},
+}));
+
+vi.mock("../lib/bridge", () => ({
+	aoBridge: {
+		daemon: {
+			start: startDaemonMock,
+			stop: stopDaemonMock,
+		},
 	},
 }));
 
@@ -56,8 +67,12 @@ beforeEach(() => {
 	getMock.mockReset();
 	postMock.mockReset();
 	putMock.mockReset();
+	startDaemonMock.mockReset();
+	stopDaemonMock.mockReset();
 	postMock.mockResolvedValue({ data: { orchestrator: { id: "proj-1-orchestrator", projectId: "proj-1" } }, error: undefined });
 	putMock.mockResolvedValue({ data: { project: {} }, error: undefined });
+	startDaemonMock.mockResolvedValue({ state: "starting" });
+	stopDaemonMock.mockResolvedValue({ state: "stopped" });
 	projectResponse = undefined;
 	agentsResponse = undefined;
 	orchestratorsResponse = { data: { sessions: [] }, error: undefined };
@@ -501,6 +516,68 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByText("Orchestrator replacement pending")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Retry when idle" })).toBeDisabled();
 		expect(screen.getByText("Current orchestrator must be idle before retrying.")).toBeInTheDocument();
+	});
+
+	it("offers an AO daemon restart when replacement stopped the old orchestrator but could not record state", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+		mockAgents({
+			supported: [
+				{ id: "claude-code", label: "Claude Code" },
+				{ id: "codex", label: "Codex" },
+			],
+			installed: [
+				{ id: "claude-code", label: "Claude Code" },
+				{ id: "codex", label: "Codex" },
+			],
+			authorized: [
+				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
+				{ id: "codex", label: "Codex", authStatus: "authorized" },
+			],
+		});
+		mockOrchestrators([
+			{
+				id: "proj-1-orchestrator",
+				projectId: "proj-1",
+				kind: "orchestrator",
+				status: "idle",
+				isTerminated: false,
+			},
+		]);
+		mockGetResponses();
+		postMock.mockResolvedValueOnce({
+			data: undefined,
+			error: {
+				code: "ORCHESTRATOR_REPLACEMENT_RECOVERY_REQUIRED",
+				message: "state could not be recorded",
+			},
+		});
+
+		renderSettings();
+
+		await chooseOption(await screen.findByRole("combobox", { name: "Default orchestrator agent" }), "Codex");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(
+			await screen.findByText(
+				"Saved. New orchestrator started and the previous orchestrator was stopped, but its session state could not be updated.",
+			),
+		).toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "Restart AO daemon" }));
+
+		await waitFor(() => expect(stopDaemonMock).toHaveBeenCalledTimes(1));
+		expect(startDaemonMock).toHaveBeenCalledTimes(1);
+		expect(await screen.findByText("AO daemon restart requested.")).toBeInTheDocument();
 	});
 
 	it("keeps the retry card after reload when daemon default is the desired orchestrator agent", async () => {

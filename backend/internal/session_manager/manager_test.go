@@ -86,8 +86,11 @@ func (f *fakeStore) GetDisplayPRFactsForSession(_ context.Context, id domain.Ses
 }
 
 type fakeLCM struct {
-	store     *fakeStore
-	completed int
+	store        *fakeStore
+	completed    int
+	termErr      error
+	termFailures int
+	termAlways   bool
 }
 
 func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata domain.SessionMetadata) error {
@@ -100,6 +103,13 @@ func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata d
 	return nil
 }
 func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
+	if l.termErr != nil && l.termAlways {
+		return l.termErr
+	}
+	if l.termErr != nil && l.termFailures > 0 {
+		l.termFailures--
+		return l.termErr
+	}
 	rec := l.store.sessions[id]
 	rec.IsTerminated = true
 	rec.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: time.Now()}
@@ -109,6 +119,7 @@ func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 
 type fakeRuntime struct {
 	createErr          error
+	destroyErr         error
 	created, destroyed int
 	lastCfg            ports.RuntimeConfig
 	alive              bool
@@ -123,7 +134,10 @@ func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.
 	r.created++
 	return ports.RuntimeHandle{ID: "h1"}, nil
 }
-func (r *fakeRuntime) Destroy(context.Context, ports.RuntimeHandle) error { r.destroyed++; return nil }
+func (r *fakeRuntime) Destroy(context.Context, ports.RuntimeHandle) error {
+	r.destroyed++
+	return r.destroyErr
+}
 func (r *fakeRuntime) IsAlive(context.Context, ports.RuntimeHandle) (bool, error) {
 	return r.alive, r.probeErr
 }
@@ -481,8 +495,65 @@ func TestRetireOrchestrator_ReturnsErrorWhenRuntimeStaysAlive(t *testing.T) {
 	if rt.destroyed != orchestratorRetireAttempts {
 		t.Fatalf("destroy attempts = %d, want %d", rt.destroyed, orchestratorRetireAttempts)
 	}
+	if got := st.sessions["mer-1"]; !got.IsTerminated {
+		t.Fatalf("retired session = %+v, want terminated after destroy intent", got)
+	}
+}
+
+func TestRetireOrchestrator_TerminatesWhenProbeFailsAfterDestroy(t *testing.T) {
+	m, st, rt, ws := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+	rt.probeErr = errors.New("list sessions failed")
+	if err := m.RetireOrchestrator(ctx, "mer-1"); err != nil {
+		t.Fatalf("RetireOrchestrator: %v", err)
+	}
+	if ws.destroyed != 1 {
+		t.Fatalf("workspace destroy attempts = %d, want 1", ws.destroyed)
+	}
+	if got := st.sessions["mer-1"]; !got.IsTerminated {
+		t.Fatalf("retired session = %+v, want terminated despite probe failure after destroy", got)
+	}
+}
+
+func TestRetireOrchestrator_TerminatesWhenWorkspaceDestroyFailsAfterRuntimeDestroy(t *testing.T) {
+	m, st, _, ws := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+	ws.destroyErr = errors.New("cleanup failed")
+	if err := m.RetireOrchestrator(ctx, "mer-1"); err != nil {
+		t.Fatalf("RetireOrchestrator: %v", err)
+	}
+	if got := st.sessions["mer-1"]; !got.IsTerminated {
+		t.Fatalf("retired session = %+v, want terminated despite workspace cleanup failure", got)
+	}
+}
+
+func TestRetireOrchestrator_ReturnsRecoveryErrorWhenTerminationRecordFailsAfterDestroy(t *testing.T) {
+	m, st, rt, _ := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+	m.lcm = &fakeLCM{store: st, termErr: errors.New("db unavailable"), termAlways: true}
+	if err := m.RetireOrchestrator(ctx, "mer-1"); !errors.Is(err, ErrRetireTerminationUnrecorded) {
+		t.Fatalf("RetireOrchestrator err = %v, want ErrRetireTerminationUnrecorded", err)
+	}
+	if rt.destroyed != 1 {
+		t.Fatalf("destroy attempts = %d, want 1", rt.destroyed)
+	}
 	if got := st.sessions["mer-1"]; got.IsTerminated {
-		t.Fatalf("retired session = %+v, want still live after failed retirement", got)
+		t.Fatalf("retired session = %+v, want active because termination record failed", got)
+	}
+}
+
+func TestRetireOrchestrator_RetriesTransientTerminationRecordFailure(t *testing.T) {
+	m, st, rt, _ := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+	m.lcm = &fakeLCM{store: st, termErr: errors.New("database locked"), termFailures: 1}
+	if err := m.RetireOrchestrator(ctx, "mer-1"); err != nil {
+		t.Fatalf("RetireOrchestrator: %v", err)
+	}
+	if rt.destroyed != 1 {
+		t.Fatalf("destroy attempts = %d, want 1", rt.destroyed)
+	}
+	if got := st.sessions["mer-1"]; !got.IsTerminated {
+		t.Fatalf("retired session = %+v, want terminated after retry", got)
 	}
 }
 

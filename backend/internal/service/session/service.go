@@ -182,6 +182,13 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 			continue
 		}
 		if err := s.manager.RetireOrchestrator(ctx, orch.ID); err != nil {
+			if errors.Is(err, sessionmanager.ErrRetireTerminationUnrecorded) {
+				return domain.Session{}, apierr.Conflict(
+					"ORCHESTRATOR_REPLACEMENT_RECOVERY_REQUIRED",
+					fmt.Sprintf("Replacement orchestrator started and previous orchestrator %s was stopped, but its terminated state could not be recorded", orch.ID),
+					map[string]any{"oldOrchestratorId": orch.ID},
+				)
+			}
 			return domain.Session{}, apierr.Conflict(
 				"ORCHESTRATOR_REPLACEMENT_INCOMPLETE",
 				fmt.Sprintf("Replacement orchestrator started, but previous orchestrator %s could not be retired", orch.ID),

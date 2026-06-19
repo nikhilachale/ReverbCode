@@ -35,6 +35,10 @@ var (
 	// ErrSessionStillAlive means teardown could not prove the runtime is gone
 	// even after destroy was attempted.
 	ErrSessionStillAlive = errors.New("session: runtime still alive after destroy")
+	// ErrRetireTerminationUnrecorded means replacement cutover destroyed the old
+	// orchestrator runtime but could not update durable session state. Callers
+	// must not claim the previous orchestrator was preserved.
+	ErrRetireTerminationUnrecorded = errors.New("session: runtime destroyed but termination was not recorded")
 )
 
 // Env vars a spawned process reads to learn who it is.
@@ -47,6 +51,9 @@ const (
 	// Replacement cutover gets one retry after the initial destroy attempt
 	// before the old orchestrator retirement fails hard.
 	orchestratorRetireAttempts = 2
+	// A transient SQLite lock after runtime destroy should be retried before
+	// surfacing recovery-required state to the user.
+	orchestratorTerminationRecordAttempts = 3
 )
 
 // hookBinaryName is the executable name the workspace hook commands invoke:
@@ -445,8 +452,8 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 }
 
 // RetireOrchestrator tears down an old orchestrator during replacement cutover.
-// It retries destroy and requires a clean liveness probe before marking the old
-// orchestrator terminated.
+// Once runtime destroy succeeds, terminal intent is recorded before fallible
+// probe/workspace cleanup so the old orchestrator is not reported as preserved.
 func (m *Manager) RetireOrchestrator(ctx context.Context, id domain.SessionID) error {
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
@@ -467,14 +474,14 @@ func (m *Manager) RetireOrchestrator(ctx context.Context, id domain.SessionID) e
 			}
 			continue
 		}
+		if err := m.recordRetiredTermination(ctx, id); err != nil {
+			return err
+		}
 		alive, err := m.runtime.IsAlive(ctx, handle)
 		if err != nil {
-			if attempt == orchestratorRetireAttempts-1 {
-				return fmt.Errorf("retire %s: probe: %w", id, err)
-			}
-			continue
-		}
-		if alive {
+			m.logger.Warn("session manager: old orchestrator probe failed after runtime destroy",
+				"session", id, "err", err)
+		} else if alive {
 			if attempt == orchestratorRetireAttempts-1 {
 				return fmt.Errorf("retire %s: %w", id, ErrSessionStillAlive)
 			}
@@ -484,12 +491,31 @@ func (m *Manager) RetireOrchestrator(ctx context.Context, id domain.SessionID) e
 			m.logger.Warn("session manager: old orchestrator workspace destroy failed after runtime exit",
 				"session", id, "err", err)
 		}
-		if err := m.lcm.MarkTerminated(ctx, id); err != nil {
-			return fmt.Errorf("retire %s: %w", id, err)
-		}
 		return nil
 	}
 	return fmt.Errorf("retire %s: %w", id, ErrSessionStillAlive)
+}
+
+func (m *Manager) recordRetiredTermination(ctx context.Context, id domain.SessionID) error {
+	var lastErr error
+	for attempt := 0; attempt < orchestratorTerminationRecordAttempts; attempt++ {
+		if err := m.lcm.MarkTerminated(ctx, id); err != nil {
+			lastErr = err
+			if attempt == orchestratorTerminationRecordAttempts-1 {
+				break
+			}
+			timer := time.NewTimer(25 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return fmt.Errorf("retire %s: %w: %v", id, ErrRetireTerminationUnrecorded, ctx.Err())
+			case <-timer.C:
+			}
+			continue
+		}
+		return nil
+	}
+	return fmt.Errorf("retire %s: %w: %v", id, ErrRetireTerminationUnrecorded, lastErr)
 }
 
 // Restore relaunches a torn-down session in its workspace. The fallible I/O runs

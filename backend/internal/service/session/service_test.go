@@ -297,6 +297,23 @@ func TestSpawnOrchestratorCleanRetireFailureReturnsCutoverError(t *testing.T) {
 	}
 }
 
+func TestSpawnOrchestratorCleanRetireUnrecordedReturnsRecoveryError(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
+	fc := &fakeCommander{retireErr: fmt.Errorf("retire mer-1: %w: db unavailable", sessionmanager.ErrRetireTerminationUnrecorded)}
+	svc := &Service{manager: fc, store: st}
+
+	_, err := svc.SpawnOrchestrator(context.Background(), "mer", true)
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Code != "ORCHESTRATOR_REPLACEMENT_RECOVERY_REQUIRED" {
+		t.Fatalf("err = %v, want ORCHESTRATOR_REPLACEMENT_RECOVERY_REQUIRED", err)
+	}
+	if !strings.Contains(e.Message, "was stopped") {
+		t.Fatalf("message = %q, want stopped recovery message", e.Message)
+	}
+}
+
 // TestSpawnUnknownProjectReturns404 covers Bug 1: an HTTP spawn for an
 // unregistered projectId must surface PROJECT_NOT_FOUND (apierr.NotFound)
 // BEFORE any session row is created, so no orphan terminated row is left
