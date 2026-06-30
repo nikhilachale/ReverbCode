@@ -5,6 +5,7 @@ import {
 	dialog,
 	ipcMain,
 	net,
+	nativeImage,
 	Notification as ElectronNotification,
 	protocol,
 	shell,
@@ -136,6 +137,16 @@ function windowIconPath(): string | undefined {
 		? path.join(process.resourcesPath, "icon.png")
 		: path.join(__dirname, "../../assets/icon.png");
 	return existsSync(candidate) ? candidate : undefined;
+}
+
+function applyRuntimeAppIcon(): void {
+	if (process.platform !== "darwin") return;
+	const iconPath = windowIconPath();
+	if (!iconPath) return;
+	const icon = nativeImage.createFromPath(iconPath);
+	if (!icon.isEmpty()) {
+		app.dock.setIcon(icon);
+	}
 }
 
 function setDaemonStatus(nextStatus: DaemonStatus): void {
@@ -735,6 +746,7 @@ function initAutoUpdates(): void {
 
 app.whenReady().then(() => {
 	registerRendererProtocol();
+	applyRuntimeAppIcon();
 	createWindow();
 	void startDaemon();
 	initAutoUpdates();
